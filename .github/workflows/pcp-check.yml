@@ -1,0 +1,109 @@
+name: Check Plugin with PCP
+on:
+  workflow_call:
+    inputs:
+        php-versions:
+            description: 'PHP versions to test against'
+            type: string
+            required: true
+        exclude_files:
+            description: 'Files to exclude from the check'
+            type: string
+            required: false
+            default: '.gitignore'
+        ignore_codes:
+            description: 'Ignore codes for the check'
+            type: string
+            required: false
+            default: 'WordPress.DateTime.RestrictedFunctions.date_date'
+        plugin_slug:
+            description: 'The slug of the plugin on WordPress.org and Freemius'
+            required: true
+            type: string
+        plugin_id:
+            description: 'Freemius plugin ID'
+            required: true
+            type: string
+        deploy_to_wp:
+            description: 'Wether to deploy to WordPress.org or not'
+            type: boolean
+            required: true
+jobs:
+    pcp:
+        runs-on: ubuntu-latest
+        strategy:
+            matrix:
+                php-version: ${{ fromJSON(inputs.php-versions) }}
+        name: 'PHP ${{ matrix.php-version }}'
+        steps:
+            # Checkout the repository
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            # Setup PHP
+            - name: Setup PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                  php-version: ${{ matrix.php-version }}
+                  tools: composer
+
+            #Cache Composer Dependencies      
+            - name: Cache Composer Dependencies
+              uses: actions/cache@v3
+              with:
+                path: vendor
+                key: composer-${{ hashFiles('composer.json', 'composer.lock') }}-php-${{ matrix.php-version }}
+                restore-keys: |
+                  composer-${{ hashFiles('composer.json', 'composer.lock') }}-
+                  composer-
+                
+            # Install Dependencies
+            - name: Install dependencies
+              run: composer install --no-dev --no-progress --optimize-autoloader --no-scripts
+            
+            # Run PCP check
+            - name: PCP
+              uses: wordpress/plugin-check-action@v1
+              with:
+                  exclude-files: ${{ inputs.exclude_files }}
+                  ignore-codes: ${{ inputs.ignore_codes }}
+    deploy:
+        needs: pcp
+        runs-on: ubuntu-latest
+        steps:
+            # Checkout the repository
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-tags: true
+            
+            #Get the version from the tag
+            - name: Get version from tag
+              id: get_version
+              run: |
+                  # Get the latest tag pointing to HEAD
+                  TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+                  echo "Latest tag on HEAD: $TAG"
+
+                  # If no tag is found, skip deploy
+                  if [ -z "$TAG" ]; then
+                    echo "No tag on latest commit. Skipping deploy."
+                    exit 0
+                  fi
+
+                  # Remove leading 'v' from the tag (if present)
+                  VERSION=${TAG#v}
+                  echo "Stripped version: $VERSION"
+
+                  # Set output using the GITHUB_OUTPUT file
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+            
+            # Trigger Deploy Workflow
+            - name: Trigger Deploy Workflow
+              if: ${{ steps.get_version.outputs.version != '' }}
+              uses: ./.github/workflows/deploy-plugin.yml
+              with:
+                version: ${{ steps.get_version.outputs.version }}
+                plugin_slug: ${{ inputs.plugin_slug }}
+                plugin_id: ${{ inputs.plugin_id }}
+                deploy_to_wp: ${{ inputs.deploy_to_wp }}

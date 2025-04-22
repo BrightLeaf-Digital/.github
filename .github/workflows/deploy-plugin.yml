@@ -17,6 +17,10 @@ on:
         description: 'Freemius plugin ID'
         required: true
         type: string
+      deploy_to_wp:
+        description: 'Whether to deploy to WordPress.org or not'
+        type: boolean
+        required: true
         
     secrets:
       FREEMIUS_PUBLIC_KEY:
@@ -75,10 +79,10 @@ jobs:
           PLUGIN_ID: ${{ inputs.plugin_id }}
 
       - name: Unzip plugin for WP.org
-        if: ${{ secrets.WP_SVN_USERNAME && secrets.WP_SVN_PASSWORD }}
+        if: ${{ inputs.deploy_to_wp }}
         run: |
           mkdir plugin-dir
-          unzip ${{ steps.deploy.outputs.free_version }} -d plugin-dir
+          unzip ${{ steps.freemius_deploy.outputs.free_version }} -d plugin-dir
           if [ -d "plugin-dir/${{ inputs.plugin_slug }}" ]; then
             mv "plugin-dir/${{ inputs.plugin_slug }}"/* plugin-dir/
             rm -rf "plugin-dir/${{ inputs.plugin_slug }}"
@@ -86,7 +90,7 @@ jobs:
 
     # Deploy to WordPress.org SVN
       - name: Deploy to WordPress.org
-        if: ${{ secrets.WP_SVN_USERNAME && secrets.WP_SVN_PASSWORD }}
+        if: ${{ inputs.deploy_to_wp }}
         uses: 10up/action-wordpress-plugin-deploy@stable
         env:
           SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
