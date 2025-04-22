@@ -1,0 +1,95 @@
+name: 'Deploy Plugin'
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version to deploy'
+        required: true
+        type: string
+        
+      plugin_slug:
+        description: 'The slug of the plugin on WordPress.org and Freemius'
+        required: true
+        type: string
+        
+      plugin_id:
+        description: 'Freemius plugin ID'
+        required: true
+        type: string
+        
+    secrets:
+      FREEMIUS_PUBLIC_KEY:
+        required: true
+        
+      DEV_ID:
+        required: true
+        
+      FREEMIUS_SECRET_KEY:
+        required: true
+        
+      WP_SVN_USERNAME:
+        required: false
+    
+      WP_SVN_PASSWORD:
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the repository
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Setup PHP
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          tools: composer
+
+      # Install Dependencies
+      - name: Install dependencies
+        run: composer install --no-dev --no-progress --optimize-autoloader
+
+      # Create Zip
+      - name: Create Zip
+        run: |
+          mkdir -p build
+          zip -r build/plugin.zip includes vendor *.php *.txt
+
+      # Deploy to Freemius
+      - name: Deploy to Freemius
+        id: freemius_deploy
+        uses: buttonizer/freemius-deploy@master
+        with:
+          file_name: build/plugin.zip
+          release_mode: 'released'
+          version: ${{ inputs.version }}
+        env:
+          PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
+          DEV_ID: ${{ secrets.DEV_ID }}
+          SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+
+      - name: Unzip plugin for WP.org
+        if: ${{ secrets.WP_SVN_USERNAME && secrets.WP_SVN_PASSWORD }}
+        run: |
+          mkdir plugin-dir
+          unzip ${{ steps.deploy.outputs.free_version }} -d plugin-dir
+          if [ -d "plugin-dir/${{ inputs.plugin_slug }}" ]; then
+            mv "plugin-dir/${{ inputs.plugin_slug }}"/* plugin-dir/
+            rm -rf "plugin-dir/${{ inputs.plugin_slug }}"
+          fi
+
+    # Deploy to WordPress.org SVN
+      - name: Deploy to WordPress.org
+        if: ${{ secrets.WP_SVN_USERNAME && secrets.WP_SVN_PASSWORD }}
+        uses: 10up/action-wordpress-plugin-deploy@stable
+        env:
+          SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
+          BUILD_DIR: plugin-dir
+          SLUG: ${{ inputs.plugin_slug }}
