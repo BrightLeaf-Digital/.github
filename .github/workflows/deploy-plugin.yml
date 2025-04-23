@@ -55,7 +55,7 @@ jobs:
 
       # Install Dependencies
       - name: Install dependencies
-        run: composer install --no-dev --no-progress --optimize-autoloader
+        run: composer install --no-dev --no-progress --optimize-autoloader --no-scripts
 
       # Create Zip
       - name: Create Zip
