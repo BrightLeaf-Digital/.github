@@ -28,6 +28,17 @@ on:
             description: 'Wether to deploy to WordPress.org or not'
             type: boolean
             required: true
+    secrets:
+      FREEMIUS_PUBLIC_KEY:
+        required: true   
+      DEV_ID:
+        required: true        
+      FREEMIUS_SECRET_KEY:
+        required: true        
+      WP_SVN_USERNAME:
+        required: false    
+      WP_SVN_PASSWORD:
+        required: false
 jobs:
     pcp:
         runs-on: ubuntu-latest
@@ -67,9 +78,11 @@ jobs:
               with:
                   exclude-files: ${{ inputs.exclude_files }}
                   ignore-codes: ${{ inputs.ignore_codes }}
-    deploy:
+    get_version:
         needs: pcp
         runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.get_version.outputs.version }}
         steps:
             # Checkout the repository
             - name: Checkout
@@ -78,7 +91,7 @@ jobs:
                   fetch-tags: true
             
             #Get the version from the tag
-            - name: Get version from tag
+            - name: Get version from tag  
               id: get_version
               run: |
                   # Get the latest tag pointing to HEAD
@@ -98,12 +111,17 @@ jobs:
                   # Set output using the GITHUB_OUTPUT file
                   echo "version=$VERSION" >> $GITHUB_OUTPUT
             
-            # Trigger Deploy Workflow
-            - name: Trigger Deploy Workflow
-              if: ${{ steps.get_version.outputs.version != '' }}
-              uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
-              with:
-                version: ${{ steps.get_version.outputs.version }}
-                plugin_slug: ${{ inputs.plugin_slug }}
-                plugin_id: ${{ inputs.plugin_id }}
-                deploy_to_wp: ${{ inputs.deploy_to_wp }}
+          
+    maybe_deploy:
+        needs: get_version
+        if: ${{ needs.get_version.outputs.version }} != ''
+        uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
+        with:
+          version: ${{ needs.get_version.outputs.version }}
+          plugin_slug: ${{ inputs.plugin_slug }}
+          plugin_id: ${{ inputs.plugin_id }}
+          deploy_to_wp: ${{ inputs.deploy_to_wp }}
+        secrets:
+          FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
+          DEV_ID: ${{ secrets.DEV_ID }}
+          FREEMIUS_SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
