@@ -125,3 +125,5 @@ jobs:
           FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
           FREEMIUS_SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
+          WP_SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
+          WP_SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
