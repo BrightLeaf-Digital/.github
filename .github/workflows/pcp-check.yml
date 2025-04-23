@@ -101,7 +101,7 @@ jobs:
             # Trigger Deploy Workflow
             - name: Trigger Deploy Workflow
               if: ${{ steps.get_version.outputs.version != '' }}
-              uses: ./.github/workflows/deploy-plugin.yml
+              uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
               with:
                 version: ${{ steps.get_version.outputs.version }}
                 plugin_slug: ${{ inputs.plugin_slug }}
