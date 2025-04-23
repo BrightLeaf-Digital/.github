@@ -97,4 +97,4 @@ jobs:
           SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
           BUILD_DIR: plugin-dir
           SLUG: ${{ inputs.plugin_slug }}
-          VERSION: ${{ inputs.version }}
+          #VERSION: ${{ inputs.version }}
