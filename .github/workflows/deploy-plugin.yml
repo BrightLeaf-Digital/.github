@@ -66,7 +66,7 @@ jobs:
       # Deploy to Freemius
       - name: Deploy to Freemius
         id: freemius_deploy
-        uses: buttonizer/freemius-deploy@master
+        uses: eitan-brightleaf/freemius-deploy@master
         with:
           file_name: build/plugin.zip
           release_mode: 'released'
