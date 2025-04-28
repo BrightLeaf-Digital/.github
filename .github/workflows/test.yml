@@ -1,0 +1,52 @@
+name: test
+on:
+    workflow_dispatch:
+jobs:
+    get_version:
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.get_version.outputs.version }}
+        steps:
+            # Checkout the repository
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                  fetch-tags: true
+            
+            #Get the version from the tag
+            - name: Get version from tag  
+              id: get_version
+              run: |
+                  # Get the latest tag pointing to HEAD
+                  TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
+                  echo "Latest tag on HEAD: $TAG"
+
+                  # If no tag is found, skip deploy
+                  if [ -z "$TAG" ]; then
+                    echo "No tag on latest commit. Skipping deploy."
+                    exit 0
+                  fi
+
+                  # Remove leading 'v' from the tag (if present)
+                  VERSION=${TAG#v}
+                  echo "Stripped version: $VERSION"
+
+                  # Set output using the GITHUB_OUTPUT file
+                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+            
+          
+    maybe_deploy:
+        needs: get_version
+        if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
+        uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
+        with:
+          version: ${{ needs.get_version.outputs.version }}
+          plugin_slug: ${{ inputs.plugin_slug }}
+          plugin_id: ${{ inputs.plugin_id }}
+          deploy_to_wp: ${{ inputs.deploy_to_wp }}
+        secrets:
+          FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
+          DEV_ID: ${{ secrets.DEV_ID }}
+          FREEMIUS_SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
+          WP_SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
+          WP_SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
