@@ -114,7 +114,7 @@ jobs:
           
     maybe_deploy:
         needs: get_version
-        if: ${{ needs.get_version.outputs.version }} != ''
+        if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
         uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
         with:
           version: ${{ needs.get_version.outputs.version }}
