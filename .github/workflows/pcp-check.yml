@@ -58,18 +58,20 @@ jobs:
                   php-version: ${{ matrix.php-version }}
                   tools: composer
 
-            #Cache Composer Dependencies      
+            # Cache Composer Dependencies
             - name: Cache Composer Dependencies
+              id: composer-cache
               uses: actions/cache@v3
               with:
-                path: vendor
-                key: composer-${{ hashFiles('composer.json', 'composer.lock') }}-php-${{ matrix.php-version }}
-                restore-keys: |
-                  composer-${{ hashFiles('composer.json', 'composer.lock') }}-
-                  composer-
-                
-            # Install Dependencies
+                  path: vendor
+                  key: composer-${{ hashFiles('composer.json') }}-php-${{ matrix.php-version }}
+                  restore-keys: |
+                    composer-${{ hashFiles('composer.json') }}-
+                    composer-
+
+            # Install dependencies if necessary
             - name: Install dependencies
+              if: steps.composer-cache.outputs.cache-hit != 'true'
               run: composer install --no-dev --no-progress --optimize-autoloader --no-scripts
             
             # Run PCP check
