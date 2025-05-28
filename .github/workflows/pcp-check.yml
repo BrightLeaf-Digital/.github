@@ -112,10 +112,11 @@ jobs:
         if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
         uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
         with:
-          version: ${{ needs.get_version.outputs.version }}
           plugin_slug: ${{ inputs.plugin_slug }}
           plugin_id: ${{ inputs.plugin_id }}
           deploy_to_wp: ${{ inputs.deploy_to_wp }}
+          fail_on_duplicate: true
+          overwrite: true
         secrets:
           FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
