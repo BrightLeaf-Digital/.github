@@ -3,10 +3,18 @@ name: 'Deploy Plugin'
 on:
   workflow_call:
     inputs:
-      version:
-        description: 'Version to deploy'
-        required: true
-        type: string
+      
+      fail_on_duplicate:
+        description: 'Whether to fail on duplicate plugin versions'
+        type: boolean
+        required: false
+        default: true
+
+      overwrite:
+        description: 'Whether to overwrite existing plugin versions'
+        type: boolean
+        required: false
+        default: false
         
       plugin_slug:
         description: 'The slug of the plugin on WordPress.org and Freemius'
@@ -17,6 +25,7 @@ on:
         description: 'Freemius plugin ID'
         required: true
         type: string
+        
       deploy_to_wp:
         description: 'Whether to deploy to WordPress.org or not'
         type: boolean
@@ -66,11 +75,13 @@ jobs:
       # Deploy to Freemius
       - name: Deploy to Freemius
         id: freemius_deploy
-        uses: eitan-brightleaf/freemius-deploy@master
+        uses: eitan-brightleaf/freemius-deploy@main
         with:
           file_name: build/plugin.zip
           release_mode: 'released'
-          version: ${{ inputs.version }}
+          add_contributor: 'true'
+          fail_on_duplicate: '${{ inputs.fail_on_duplicate }}'
+          overwrite: '${{ inputs.overwrite }}'
         env:
           PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
@@ -97,4 +108,4 @@ jobs:
           SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
           BUILD_DIR: plugin-dir
           SLUG: ${{ inputs.plugin_slug }}
-          VERSION: ${{ inputs.version }}
+          # VERSION: ${{ inputs.version }}
