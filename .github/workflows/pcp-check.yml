@@ -24,6 +24,17 @@ on:
             description: 'Wether to deploy to WordPress.org or not'
             type: boolean
             required: true
+        fail_on_duplicate:
+            description: 'Whether to fail on duplicate plugin versions'
+            type: boolean
+            required: false
+            default: true
+        overwrite:
+            description: 'Whether to overwrite existing plugin versions'
+            type: boolean
+            required: false
+            default: false
+
     secrets:
       FREEMIUS_PUBLIC_KEY:
         required: true   
@@ -115,8 +126,8 @@ jobs:
           plugin_slug: ${{ inputs.plugin_slug }}
           plugin_id: ${{ inputs.plugin_id }}
           deploy_to_wp: ${{ inputs.deploy_to_wp }}
-          fail_on_duplicate: true
-          overwrite: true
+          fail_on_duplicate: ${{ inputs.fail_on_duplicate }}
+          overwrite: ${{ inputs.overwrite }}
         secrets:
           FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
