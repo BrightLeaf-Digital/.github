@@ -4,6 +4,12 @@ on:
   workflow_call:
     inputs:
 
+      zip_files:
+        description: 'Files and directories to include in the zip'
+        required: false
+        type: string
+        default: 'includes vendor *.php *.txt'
+
       version:
         description: 'Version to deploy'
         required: true
@@ -75,7 +81,7 @@ jobs:
       - name: Create Zip
         run: |
           mkdir -p build
-          zip -r build/plugin.zip includes vendor *.php *.txt
+          zip -r build/plugin.zip ${{ inputs.zip_files }}
 
       # Deploy to Freemius
       - name: Deploy to Freemius

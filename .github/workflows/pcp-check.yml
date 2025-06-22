@@ -34,6 +34,11 @@ on:
             type: boolean
             required: false
             default: false
+        zip_files:
+            description: 'Files and directories to include in the zip'
+            type: string
+            required: false
+            default: 'includes vendor *.php *.txt'
 
     secrets:
       FREEMIUS_PUBLIC_KEY:
@@ -129,6 +134,7 @@ jobs:
           fail_on_duplicate: ${{ inputs.fail_on_duplicate }}
           overwrite: ${{ inputs.overwrite }}
           version: ${{ needs.get_version.outputs.version }}
+          zip_files: ${{ inputs.zip_files }}
         secrets:
           FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
