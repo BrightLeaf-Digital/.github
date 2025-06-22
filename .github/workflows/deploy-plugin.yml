@@ -93,6 +93,8 @@ jobs:
           add_contributor: 'true'
           fail_on_duplicate: '${{ inputs.fail_on_duplicate }}'
           overwrite: '${{ inputs.overwrite }}'
+          download_premium: 'false'
+          download_free: ${{ inputs.deploy_to_wp }}
         env:
           PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
