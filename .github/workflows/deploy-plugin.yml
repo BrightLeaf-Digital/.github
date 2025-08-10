@@ -73,9 +73,21 @@ jobs:
           php-version: '8.0'
           tools: composer
 
-      # Install Dependencies
+      # Cache Composer Dependencies
+      - name: Cache Composer Dependencies
+        id: composer-cache
+        uses: actions/cache@v3
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.json') }}
+          restore-keys: |
+            composer-${{ hashFiles('composer.json') }}-
+            composer-
+
+      # Install Dependencies (allow scripts to run for Strauss processing)
       - name: Install dependencies
-        run: composer install --no-dev --no-progress --optimize-autoloader --no-scripts
+        if: steps.composer-cache.outputs.cache-hit != 'true'
+        run: composer install --no-dev --no-progress --optimize-autoloader
 
       # Create Zip
       - name: Create Zip
