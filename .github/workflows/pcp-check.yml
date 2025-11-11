@@ -105,12 +105,12 @@ jobs:
               with:
                   fetch-tags: true
 
-            #Get the version from the tag
-            - name: Get version from tag  
+            #Get the version from the tag or input
+            - name: Get version from tag or input
               id: get_version
               run: |
                   # Prefer manual input if provided
-                  INPUT_VERSION="${{ github.event.inputs.version }}"
+                  INPUT_VERSION="${{ inputs.version }}"
                   if [ -n "$INPUT_VERSION" ]; then
                     VERSION="${INPUT_VERSION#v}"
                     echo "Using manual input version: $VERSION"
