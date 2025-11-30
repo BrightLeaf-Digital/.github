@@ -41,6 +41,11 @@ on:
         description: 'Whether to deploy to WordPress.org or not'
         type: boolean
         required: true
+
+      update_feed_item_key:
+        description: 'The key for the update feed item'
+        required: true
+        type: string
         
     secrets:
       FREEMIUS_PUBLIC_KEY:
@@ -57,6 +62,12 @@ on:
     
       WP_SVN_PASSWORD:
         required: false
+
+      BLD_API_KEY:
+        required: true
+
+      UPDATE_FEED_URL:
+        required: true
 
 jobs:
   deploy:
@@ -112,7 +123,7 @@ jobs:
             rm -rf "plugin-dir/${{ inputs.plugin_slug }}"
           fi
 
-    # Deploy to WordPress.org SVN
+      # Deploy to WordPress.org SVN
       - name: Deploy to WordPress.org
         if: ${{ inputs.deploy_to_wp }}
         uses: 10up/action-wordpress-plugin-deploy@stable
@@ -122,3 +133,10 @@ jobs:
           BUILD_DIR: plugin-dir
           SLUG: ${{ inputs.plugin_slug }}
           VERSION: ${{ inputs.version }}
+
+      - name: Notify Update Feed
+        run: |
+          curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
+            -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"item_updated": "${{inputs.update_feed_item_key}}", "version": "${{ inputs.version }}"}'
