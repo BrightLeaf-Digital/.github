@@ -64,6 +64,8 @@ on:
         required: false    
       WP_SVN_PASSWORD:
         required: false
+      SSH_PRIVATE_KEY_GRAVITYOPS_CORE:
+        required: true
 jobs:
     pcp:
         runs-on: ubuntu-latest
@@ -89,6 +91,12 @@ jobs:
                   restore-keys: |
                     composer-${{ hashFiles('composer.json') }}-
                     composer-
+
+            - name: Setup SSH Agent
+              uses: webfactory/ssh-agent@v0.8.0
+              if: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE != '' }} # Only run if key exists
+              with:
+                ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
             # Install dependencies if necessary
             - name: Install dependencies
@@ -166,3 +174,4 @@ jobs:
           FREEMIUS_SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
           WP_SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
           WP_SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
+          SSH_PRIVATE_KEY_GRAVITYOPS_CORE: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}

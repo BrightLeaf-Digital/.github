@@ -69,6 +69,9 @@ on:
       UPDATE_FEED_URL:
         required: true
 
+      SSH_PRIVATE_KEY_GRAVITYOPS_CORE:
+        required: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -83,6 +86,12 @@ jobs:
         with:
           php-version: '8.0'
           tools: composer
+
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.8.0
+        if: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE != '' }} # Only run if key exists
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
       # Install Dependencies (allow scripts to run for Strauss processing)
       - name: Install dependencies
