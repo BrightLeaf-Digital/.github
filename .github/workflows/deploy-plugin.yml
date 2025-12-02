@@ -89,7 +89,6 @@ jobs:
 
       - name: Setup SSH Agent
         uses: webfactory/ssh-agent@v0.8.0
-        if: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE != '' }} # Only run if key exists
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
