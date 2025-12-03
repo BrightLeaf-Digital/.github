@@ -97,7 +97,7 @@ jobs:
             # Install dependencies if necessary
             - name: Install dependencies
               if: steps.composer-cache.outputs.cache-hit != 'true'
-              run: composer install --no-dev --no-progress --optimize-autoloader --no-scripts
+              run: composer install --no-dev --no-progress --optimize-autoloader
 
             # Run PCP check
             - name: PCP
