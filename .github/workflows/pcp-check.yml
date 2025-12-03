@@ -88,9 +88,6 @@ jobs:
               with:
                   path: vendor
                   key: composer-${{ hashFiles('composer.json') }}
-                  restore-keys: |
-                    composer-${{ hashFiles('composer.json') }}-
-                    composer-
 
             - name: Setup SSH Agent
               uses: webfactory/ssh-agent@v0.8.0
