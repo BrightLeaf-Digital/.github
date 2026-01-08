@@ -105,7 +105,7 @@ jobs:
               run: composer install --no-dev --no-progress --optimize-autoloader
 
             - name: Prefix namespaces (Strauss)
-              run: composer run-script prefix-namespaces --if-exists
+              run: composer run-script prefix-namespaces
 
             # Run PCP check
             - name: PCP
