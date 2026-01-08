@@ -96,10 +96,16 @@ jobs:
               with:
                 ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
+            - name: Remove local path repository
+              run: composer config repositories.gravityops-local --unset
+
             # Install dependencies if necessary
             - name: Install dependencies
               if: steps.composer-cache.outputs.cache-hit != 'true'
               run: composer install --no-dev --no-progress --optimize-autoloader
+
+            - name: Prefix namespaces (Strauss)
+              run: composer run-script prefix-namespaces --if-exists
 
             # Run PCP check
             - name: PCP

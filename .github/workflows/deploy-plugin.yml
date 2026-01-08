@@ -92,9 +92,15 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
+      - name: Remove local path repository
+        run: composer config repositories.gravityops-local --unset
+
       # Install Dependencies (allow scripts to run for Strauss processing)
       - name: Install dependencies
         run: composer install --no-dev --no-progress --optimize-autoloader
+
+      - name: Prefix namespaces (Strauss)
+        run: composer run-script prefix-namespaces --if-exists
 
       # Create Zip
       - name: Create Zip
