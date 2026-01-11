@@ -92,12 +92,18 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
-      - name: Remove local path repository
-        run: composer config repositories.gravityops-local --unset
-
-      # Install Dependencies (allow scripts to run for Strauss processing)
-      - name: Install dependencies
-        run: composer install --no-dev --no-progress --optimize-autoloader
+      - name: Install Production Dependencies
+        run: |
+          composer config repositories.gravityops-local --unset
+          composer config require-dev.gravityops/core --unset
+          composer config minimum-stability stable
+          composer config prefer-stable true
+            
+          # Extract version dynamically from composer.json
+          CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
+            
+          # Install all dependencies while forcing the @stable tag for core
+          composer require "gravityops/core:${CORE_VERSION}@stable" --no-dev --no-progress --optimize-autoloader --no-interaction
 
       - name: Prefix namespaces (Strauss)
         run: composer run-script prefix-namespaces
