@@ -92,7 +92,6 @@ jobs:
             - name: Install Production Dependencies
               run: |
                 composer config repositories.gravityops-local --unset
-                composer config require-dev.gravityops/core --unset
                 composer config minimum-stability stable
                 composer config prefer-stable true
                 CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
