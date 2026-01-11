@@ -102,7 +102,7 @@ jobs:
           CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
             
           # Install all dependencies while forcing the @stable tag for core
-          composer require "gravityops/core:${CORE_VERSION}@stable" --no-dev --no-progress --optimize-autoloader --no-interaction
+          composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
 
       - name: Prefix namespaces (Strauss)
         run: composer run-script prefix-namespaces
