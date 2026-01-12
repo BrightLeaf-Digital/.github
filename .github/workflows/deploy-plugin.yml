@@ -155,7 +155,17 @@ jobs:
 
       - name: Notify Update Feed
         run: |
+          # Use the input version instead of a non-existent 'needs' output
+          VERSION="${{ inputs.version }}"
+    
+          # Extract text between the current version header and the next version header
+          CHANGELOG=$(sed -n "/= $VERSION.*=/,/= /p" readme.txt | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
+    
           curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
             -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
             -H "Content-Type: application/json" \
-            -d '{"item_updated": "${{inputs.update_feed_item_key}}", "version": "${{ inputs.version }}"}'
+            -d "{
+            \"item_updated\": \"${{ inputs.update_feed_item_key }}\",
+            \"version\": \"$VERSION\",
+            \"changelog\": \"$CHANGELOG\"
+          }"
