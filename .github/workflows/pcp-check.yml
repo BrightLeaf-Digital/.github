@@ -153,7 +153,7 @@ jobs:
     maybe_deploy:
         needs: get_version
         if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
-        uses: eitan-brightleaf/.github/.github/workflows/deploy-plugin.yml@main
+        uses: BrightLeaf-Digital/.github/.github/workflows/deploy-plugin.yml@main
         with:
           plugin_slug: ${{ inputs.plugin_slug }}
           plugin_id: ${{ inputs.plugin_id }}
