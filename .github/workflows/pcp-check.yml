@@ -129,16 +129,15 @@ jobs:
                     exit 0
                   fi
 
-                # If the workflow is running on a tag, this is the tag name (e.g. v1.3.8)
-                if [ "${{ github.ref_type }}" != "tag" ]; then
-                  echo "Not a tag run. Skipping."
-                  exit 0
-                fi
+                  # If the workflow is running on a tag, this is the tag name (e.g. v1.3.8)
+                  if [ "${{ github.ref_type }}" != "tag" ]; then
+                    echo "Not a tag run. Skipping."
+                    exit 0
+                  fi
 
-                TAG="${{ github.ref_name }}"
-                VERSION="${TAG#v}"
-                echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
+                  TAG="${{ github.ref_name }}"
+                  VERSION="${TAG#v}"
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     maybe_deploy:
         needs: get_version
