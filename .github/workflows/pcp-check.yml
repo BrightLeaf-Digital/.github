@@ -113,10 +113,6 @@ jobs:
         outputs:
             version: ${{ steps.get_version.outputs.version }}
         steps:
-            # Checkout the repository
-            - name: Checkout
-              uses: actions/checkout@v4
-
             - name: Get version from tag or input
               id: get_version
               run: |
