@@ -116,10 +116,7 @@ jobs:
             # Checkout the repository
             - name: Checkout
               uses: actions/checkout@v4
-              with:
-                  fetch-tags: true
 
-            #Get the version from the tag or input
             - name: Get version from tag or input
               id: get_version
               run: |
@@ -131,23 +128,16 @@ jobs:
                     echo "version=$VERSION" >> "$GITHUB_OUTPUT"
                     exit 0
                   fi
-                  
-                  # Get the latest tag pointing to HEAD
-                  TAG=$(git describe --tags --exact-match 2>/dev/null || echo "")
-                  echo "Latest tag on HEAD: $TAG"
 
-                  # If no tag is found, skip deploy
-                  if [ -z "$TAG" ]; then
-                    echo "No tag on latest commit. Skipping deploy."
-                    exit 0
-                  fi
+                # If the workflow is running on a tag, this is the tag name (e.g. v1.3.8)
+                if [ "${{ github.ref_type }}" != "tag" ]; then
+                  echo "Not a tag run. Skipping."
+                  exit 0
+                fi
 
-                  # Remove leading 'v' from the tag (if present)
-                  VERSION=${TAG#v}
-                  echo "Stripped version: $VERSION"
-
-                  # Set output using the GITHUB_OUTPUT file
-                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+                TAG="${{ github.ref_name }}"
+                VERSION="${TAG#v}"
+                echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
 
     maybe_deploy:
