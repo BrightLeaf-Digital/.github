@@ -1,55 +1,60 @@
-name: Check Plugin with PCP
+name: 'PCP Check and Deploy'
+
 on:
   workflow_call:
     inputs:
-        exclude_files:
-            description: 'Files to exclude from the check'
-            type: string
-            required: false
-            default: |
-              .gitignore
-              .wp-env.json
-        ignore_codes:
-            description: 'Ignore codes for the check'
-            type: string
-            required: false
-            default: 'WordPress.DateTime.RestrictedFunctions.date_date'
-        plugin_slug:
-            description: 'The slug of the plugin on WordPress.org and Freemius'
-            required: true
-            type: string
-        plugin_id:
-            description: 'Freemius plugin ID'
-            required: true
-            type: string
-        deploy_to_wp:
-            description: 'Wether to deploy to WordPress.org or not'
-            type: boolean
-            required: true
-        fail_on_duplicate:
-            description: 'Whether to fail on duplicate plugin versions'
-            type: boolean
-            required: false
-            default: true
-        overwrite:
-            description: 'Whether to overwrite existing plugin versions'
-            type: boolean
-            required: false
-            default: false
-        zip_files:
-            description: 'Files and directories to include in the zip'
-            type: string
-            required: false
-            default: 'includes vendor *.php *.txt'
-        version:
-          description: 'Version to deploy (optional, overrides tag)'
-          required: false
-          type: string
-
-        update_feed_item_key:
-          description: 'The key for the update feed item'
-          required: true
-          type: string
+      exclude_files:
+        description: 'Files to exclude from the check'
+        type: string
+        required: false
+        default: |
+          .gitignore
+          .wp-env.json
+      ignore_codes:
+        description: 'Ignore codes for the check'
+        type: string
+        required: false
+        default: 'WordPress.DateTime.RestrictedFunctions.date_date'
+      plugin_slug:
+        description: 'The slug of the plugin on WordPress.org and Freemius'
+        required: true
+        type: string
+      plugin_id:
+        description: 'Freemius plugin ID'
+        required: false
+        type: string
+      deploy_to_wp:
+        description: 'Whether to deploy to WordPress.org or not'
+        type: boolean
+        required: true
+      deploy_to_freemius:
+        description: 'Whether to deploy to Freemius or not'
+        type: boolean
+        required: false
+        default: true
+      fail_on_duplicate:
+        description: 'Whether to fail on duplicate plugin versions'
+        type: boolean
+        required: false
+        default: true
+      overwrite:
+        description: 'Whether to overwrite existing plugin versions'
+        type: boolean
+        required: false
+        default: false
+      zip_files:
+        description: 'Files and directories to include in the zip'
+        type: string
+        required: false
+        default: 'includes vendor *.php *.txt'
+      version:
+        description: 'Version to deploy (optional, overrides tag)'
+        required: false
+        type: string
+      update_feed_item_key:
+        description: 'The key for the update feed item'
+        required: true
+        type: string
 
     secrets:
       BLD_API_KEY:
@@ -57,103 +62,170 @@ on:
       UPDATE_FEED_URL:
         required: true
       FREEMIUS_PUBLIC_KEY:
-        required: true   
+        required: false
       DEV_ID:
-        required: true        
+        required: false
       FREEMIUS_SECRET_KEY:
-        required: true        
+        required: false
       WP_SVN_USERNAME:
-        required: false    
+        required: false
       WP_SVN_PASSWORD:
         required: false
       SSH_PRIVATE_KEY_GRAVITYOPS_CORE:
         required: true
+
 jobs:
-    pcp:
-        runs-on: ubuntu-latest
-        steps:
-            # Checkout the repository
-            - name: Checkout
-              uses: actions/checkout@v4
+  pcp:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-            # Setup PHP
-            - name: Setup PHP
-              uses: shivammathur/setup-php@v2
-              with:
-                  php-version: '8.3'
-                  tools: composer
-
-            - name: Setup SSH Agent
-              uses: webfactory/ssh-agent@v0.8.0
-              with:
-                ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
-
-            # Clean up config and resolve correct tag dynamically
-            - name: Install Production Dependencies
-              run: |
-                composer config repositories.gravityops-local --unset
-                composer config minimum-stability stable
-                composer config prefer-stable true
-                CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
-                composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
-
-            - name: Prefix namespaces (Strauss)
-              run: composer run-script prefix-namespaces
-
-            # Run PCP check
-            - name: PCP
-              uses: wordpress/plugin-check-action@v1
-              with:
-                  exclude-files: ${{ inputs.exclude_files }}
-                  ignore-codes: ${{ inputs.ignore_codes }}
-
-    get_version:
-        needs: pcp
-        runs-on: ubuntu-latest
-        outputs:
-            version: ${{ steps.get_version.outputs.version }}
-        steps:
-            - name: Get version from tag or input
-              id: get_version
-              run: |
-                  # Prefer manual input if provided
-                  INPUT_VERSION="${{ inputs.version }}"
-                  if [ -n "$INPUT_VERSION" ]; then
-                    VERSION="${INPUT_VERSION#v}"
-                    echo "Using manual input version: $VERSION"
-                    echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-                    exit 0
-                  fi
-
-                  # If the workflow is running on a tag, this is the tag name (e.g. v1.3.8)
-                  if [ "${{ github.ref_type }}" != "tag" ]; then
-                    echo "Not a tag run. Skipping."
-                    exit 0
-                  fi
-
-                  TAG="${{ github.ref_name }}"
-                  VERSION="${TAG#v}"
-                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-    maybe_deploy:
-        needs: get_version
-        if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
-        uses: BrightLeaf-Digital/.github/.github/workflows/deploy-plugin.yml@main
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
         with:
-          plugin_slug: ${{ inputs.plugin_slug }}
-          plugin_id: ${{ inputs.plugin_id }}
-          deploy_to_wp: ${{ inputs.deploy_to_wp }}
-          fail_on_duplicate: ${{ inputs.fail_on_duplicate }}
-          overwrite: ${{ inputs.overwrite }}
-          version: ${{ needs.get_version.outputs.version }}
-          zip_files: ${{ inputs.zip_files }}
-          update_feed_item_key: ${{ inputs.update_feed_item_key }}
-        secrets:
-          BLD_API_KEY: ${{ secrets.BLD_API_KEY }}
-          UPDATE_FEED_URL: ${{ secrets.UPDATE_FEED_URL }}
-          FREEMIUS_PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
+          php-version: '8.3'
+          tools: composer
+
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
+
+      - name: Install Production Dependencies
+        run: |
+          composer config repositories.gravityops-local --unset
+          composer config minimum-stability stable
+          composer config prefer-stable true
+          CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
+          composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
+
+      - name: Prefix namespaces (Strauss)
+        run: composer run-script prefix-namespaces
+
+      - name: PCP
+        uses: wordpress/plugin-check-action@v1
+        with:
+          exclude-files: ${{ inputs.exclude_files }}
+          ignore-codes: ${{ inputs.ignore_codes }}
+
+  get_version:
+    needs: pcp
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Get version from tag or input
+        id: get_version
+        run: |
+          INPUT_VERSION="${{ inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="${INPUT_VERSION#v}"
+            echo "Using manual input version: $VERSION"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.ref_type }}" != "tag" ]; then
+            echo "Not a tag run. Skipping."
+            exit 0
+          fi
+
+          TAG="${{ github.ref_name }}"
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: [pcp, get_version]
+    if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.0'
+          tools: composer
+
+      - name: Setup SSH Agent
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
+
+      - name: Install Production Dependencies
+        run: |
+          composer config repositories.gravityops-local --unset
+          composer config minimum-stability stable
+          composer config prefer-stable true
+          CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
+          composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
+
+      - name: Prefix namespaces (Strauss)
+        run: composer run-script prefix-namespaces
+
+      - name: Create Zip
+        if: ${{ inputs.deploy_to_freemius }}
+        run: |
+          mkdir -p build
+          zip -r build/plugin.zip ${{ inputs.zip_files }}
+
+      - name: Deploy to Freemius
+        if: ${{ inputs.deploy_to_freemius }}
+        id: freemius_deploy
+        uses: eitan-brightleaf/freemius-deploy@main
+        with:
+          file_name: build/plugin.zip
+          release_mode: 'released'
+          add_contributor: 'true'
+          fail_on_duplicate: '${{ inputs.fail_on_duplicate }}'
+          overwrite: '${{ inputs.overwrite }}'
+          download_premium: 'false'
+          download_free: ${{ inputs.deploy_to_wp }}
+        env:
+          PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
-          FREEMIUS_SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
-          WP_SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
-          WP_SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
-          SSH_PRIVATE_KEY_GRAVITYOPS_CORE: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
+          SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PLUGIN_ID: ${{ inputs.plugin_id }}
+
+      - name: Prepare Plugin Directory for WP.org
+        if: ${{ inputs.deploy_to_wp }}
+        run: |
+          mkdir plugin-dir
+          if [ "${{ inputs.deploy_to_freemius }}" = "true" ]; then
+            unzip ${{ steps.freemius_deploy.outputs.free_version }} -d plugin-dir
+            if [ -d "plugin-dir/${{ inputs.plugin_slug }}" ]; then
+              mv "plugin-dir/${{ inputs.plugin_slug }}"/* plugin-dir/
+              rm -rf "plugin-dir/${{ inputs.plugin_slug }}"
+            fi
+          else
+            # Local build logic using zip_files
+            # We use a temp zip to respect the zip_files patterns and wildcards accurately
+            zip -r build/local-plugin.zip ${{ inputs.zip_files }}
+            unzip build/local-plugin.zip -d plugin-dir
+          fi
+
+      - name: Deploy to WordPress.org
+        if: ${{ inputs.deploy_to_wp }}
+        uses: 10up/action-wordpress-plugin-deploy@stable
+        env:
+          SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
+          BUILD_DIR: plugin-dir
+          SLUG: ${{ inputs.plugin_slug }}
+          VERSION: ${{ needs.get_version.outputs.version }}
+
+      - name: Notify Update Feed
+        run: |
+          VERSION="${{ needs.get_version.outputs.version }}"
+          CHANGELOG=$(sed -n "/= $VERSION.*=/,/= /p" readme.txt | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
+          curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
+            -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+            \"item_updated\": \"${{ inputs.update_feed_item_key }}\",
+            \"version\": \"$VERSION\",
+            \"changelog\": \"$CHANGELOG\"
+          }"
