@@ -235,6 +235,9 @@ jobs:
             \"changelog\": \"$CHANGELOG\"
           }"
 
+      - name: Setup Pandoc
+        uses: r-lib/actions/setup-pandoc@v2
+
       - name: Sync Documentation
         run: |
           if [ -d "docs" ]; then
@@ -243,7 +246,7 @@ jobs:
             find docs -name "*.md" -exec sh -c 'pandoc "$1" -t html -o "$1.html"' _ {} \;
             # Zip and POST
             zip -r docs.zip docs/
-            curl -X POST "${{ secrets.docs_sync_url }}" \
+            curl -X POST "${{ inputs.docs_sync_url }}" \
               -H "x-api-key: ${{ secrets.BLD_API_KEY }}" \
               -F "plugin_slug=${{ inputs.plugin_slug }}" \
               -F "docs_zip=@docs.zip"
