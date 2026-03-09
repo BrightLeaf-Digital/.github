@@ -243,7 +243,8 @@ jobs:
           if [ -d "docs" ]; then
             echo "Processing documentation for ${{ inputs.plugin_slug }}..."
             # Convert Markdown to HTML fragments
-            find docs -name "*.md" -exec sh -c 'pandoc "$1" -t html -o "$1.html"' _ {} \;
+            # Use gfm, --wrap=none and strip trailing spaces to avoid unintended line breaks
+            find docs -name "*.md" -exec sh -c 'sed "s/[[:space:]]*$//" "$1" | pandoc -f gfm -t html --wrap=none -o "$1.html"' _ {} \;
             # Zip and POST
             zip -r docs.zip docs/
             curl -X POST "${{ inputs.docs_sync_url }}" \
