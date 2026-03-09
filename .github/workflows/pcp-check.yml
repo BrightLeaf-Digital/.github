@@ -55,6 +55,11 @@ on:
         description: 'The key for the update feed item'
         required: true
         type: string
+      docs_sync_url:
+        description: 'URL to sync documentation'
+        required: false
+        type: string
+        default: 'https://brightleafdigital.io/wp-json/bld/v1/sync-docs'
 
     secrets:
       BLD_API_KEY:
@@ -229,3 +234,19 @@ jobs:
             \"version\": \"$VERSION\",
             \"changelog\": \"$CHANGELOG\"
           }"
+
+      - name: Sync Documentation
+        run: |
+          if [ -d "docs" ]; then
+            echo "Processing documentation for ${{ inputs.plugin_slug }}..."
+            # Convert Markdown to HTML fragments
+            find docs -name "*.md" -exec sh -c 'pandoc "$1" -t html -o "$1.html"' _ {} \;
+            # Zip and POST
+            zip -r docs.zip docs/
+            curl -X POST "${{ secrets.docs_sync_url }}" \
+              -H "x-api-key: ${{ secrets.BLD_API_KEY }}" \
+              -F "plugin_slug=${{ inputs.plugin_slug }}" \
+              -F "docs_zip=@docs.zip"
+          else
+            echo "No docs/ directory found. Skipping documentation sync."
+          fi
