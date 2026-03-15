@@ -46,7 +46,7 @@ on:
         description: 'Files and directories to include in the zip'
         type: string
         required: false
-        default: 'includes vendor *.php *.txt'
+        default: 'includes vendor *.php *.txt composer.json'
       version:
         description: 'Version to deploy (optional, overrides tag)'
         required: false
