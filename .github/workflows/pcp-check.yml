@@ -105,6 +105,12 @@ jobs:
           CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
           composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
 
+      - name: Cleanup Vendor
+        run: |
+          find vendor -type f -name "*.sh" -delete
+          rm -f vendor/trustedlogin/client/bin/build-sass
+          rm -f vendor/bin/build-sass
+
       - name: Prefix namespaces (Strauss)
         run: composer run-script prefix-namespaces
 
@@ -166,6 +172,12 @@ jobs:
           composer config prefer-stable true
           CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
           composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
+
+      - name: Cleanup Vendor
+        run: |
+          find vendor -type f -name "*.sh" -delete
+          rm -f vendor/trustedlogin/client/bin/build-sass
+          rm -f vendor/bin/build-sass
 
       - name: Prefix namespaces (Strauss)
         run: composer run-script prefix-namespaces
