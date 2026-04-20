@@ -247,15 +247,95 @@ jobs:
             echo "Updated Plugin Name in readme.txt"
           fi
 
-      - name: Deploy to WordPress.org
+      - name: Install Subversion
         if: ${{ inputs.deploy_to_wp }}
-        uses: 10up/action-wordpress-plugin-deploy@stable
+        run: sudo apt-get update && sudo apt-get install -y subversion
+
+      - name: Deploy to WordPress.org SVN
+        if: ${{ inputs.deploy_to_wp }}
         env:
           SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
           BUILD_DIR: plugin-dir
           SLUG: ${{ inputs.plugin_slug }}
           VERSION: ${{ needs.get_version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d "$BUILD_DIR" ]]; then
+            echo "Build directory '$BUILD_DIR' not found." >&2
+            exit 1
+          fi
+
+          SVN_URL="https://plugins.svn.wordpress.org/$SLUG"
+          echo "Deploying version $VERSION to $SVN_URL"
+
+          # Defensive cleanup in case any packaged files include SVN metadata.
+          find "$BUILD_DIR" -type d -name ".svn" -prune -exec rm -rf {} +
+
+          svn --version
+          svn checkout "$SVN_URL" wporg
+
+          rsync -rc --delete \
+            --exclude ".git" \
+            --exclude ".gitignore" \
+            --exclude ".github" \
+            --exclude ".DS_Store" \
+            --exclude "**/.git" \
+            "$BUILD_DIR"/ wporg/trunk/
+
+          cd wporg
+          svn cleanup . || true
+          svn update
+
+          # Add all new files and directories recursively.
+          svn add --force trunk --auto-props --parents
+
+          # Remove missing files safely; using substring parsing avoids status-column bugs.
+          while IFS= read -r missing_path; do
+            [[ -z "$missing_path" ]] && continue
+            svn rm --force "${missing_path}@"
+          done < <(svn status | awk 'substr($0,1,1)=="!" {print substr($0,9)}')
+
+          # Clear stale lock entries before committing.
+          while IFS= read -r locked_path; do
+            [[ -z "$locked_path" ]] && continue
+            svn cleanup "${locked_path}" || true
+          done < <(svn status | awk '(substr($0,1,1)=="L" || substr($0,3,1)=="L") {print substr($0,9)}')
+
+          svn status
+
+          if [[ -z "$(svn status)" ]]; then
+            echo "No SVN changes to commit."
+          else
+            attempts=0
+            until [ $attempts -ge 3 ]; do
+              if svn commit --username "$SVN_USERNAME" --password "$SVN_PASSWORD" --no-auth-cache -m "Release $VERSION"; then
+                echo "SVN trunk commit succeeded."
+                break
+              fi
+              attempts=$((attempts + 1))
+              if [ $attempts -ge 3 ]; then
+                echo "SVN commit failed after 3 attempts." >&2
+                exit 1
+              fi
+              echo "Commit failed, retrying in 20s... ($attempts/3)"
+              sleep 20
+              svn cleanup . || true
+              svn update
+            done
+          fi
+
+          TAG_URL="$SVN_URL/tags/$VERSION"
+          if svn ls "$TAG_URL" >/dev/null 2>&1; then
+            echo "Tag $VERSION already exists. Skipping tag creation."
+          else
+            svn copy "$SVN_URL/trunk" "$TAG_URL" \
+              --username "$SVN_USERNAME" --password "$SVN_PASSWORD" --no-auth-cache \
+              -m "Tagging $VERSION"
+            echo "Tagged $VERSION"
+          fi
 
       - name: Notify Update Feed
         run: |
