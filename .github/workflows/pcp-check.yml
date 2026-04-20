@@ -180,7 +180,14 @@ jobs:
           rm -f vendor/bin/build-sass
 
       - name: Prefix namespaces (Strauss)
-        run: composer run-script prefix-namespaces
+        run: |
+          mkdir -p bin
+          # Use a specific version that is known to have a phar
+          # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.27.0/strauss.phar -o bin/strauss.phar
+          php bin/strauss.phar
+          rm -rf bin
+          composer dump-autoload
 
       - name: Create Zip
         if: ${{ inputs.deploy_to_freemius }}
