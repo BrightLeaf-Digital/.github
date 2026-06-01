@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -93,7 +93,7 @@ jobs:
           tools: composer
 
       - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.8.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
@@ -110,23 +110,6 @@ jobs:
           find vendor -type f -name "*.sh" -delete
           rm -f vendor/trustedlogin/client/bin/build-sass
           rm -f vendor/bin/build-sass
-
-      # Strauss loads composer.json via Composer's Factory, which reads and validates
-      # any github-oauth token in the environment. This step surfaces where that token
-      # comes from and its shape (the value stays masked by Actions) when debugging auth errors.
-      - name: Debug Composer github auth
-        run: |
-          HOME_DIR="$(composer config --global home)"
-          echo "global composer home: $HOME_DIR"
-          echo "--- github-oauth in global config? ---"
-          composer config --global --list 2>/dev/null | grep -i 'github-oauth' || echo "none in global config"
-          echo "--- auth.json files present? ---"
-          ls -la "$HOME_DIR/auth.json" ./auth.json 2>/dev/null || echo "no auth.json"
-          echo "--- COMPOSER_* env present? ---"
-          env | grep -iE 'COMPOSER_(AUTH|TOKEN)' | sed 's/=.*/=<set>/' || echo "no COMPOSER_AUTH/TOKEN env"
-          echo "--- token byte-length & hidden chars (value stays masked) ---"
-          printf '%s' "${COMPOSER_TOKEN:-}" | wc -c
-          printf '%s' "${COMPOSER_TOKEN:-}" | cat -A | head -1
 
       # Prefixing only reads the already-installed composer.json/vendor and needs no GitHub
       # auth, so clear any (possibly invalid) github-oauth token to keep Composer/Strauss from
@@ -269,7 +252,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
@@ -278,7 +261,7 @@ jobs:
           tools: composer
 
       - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.8.0
+        uses: webfactory/ssh-agent@v0.10.0
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
 
