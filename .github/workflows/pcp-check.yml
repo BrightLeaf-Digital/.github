@@ -111,14 +111,131 @@ jobs:
           rm -f vendor/trustedlogin/client/bin/build-sass
           rm -f vendor/bin/build-sass
 
+      # Strauss loads composer.json via Composer's Factory, which reads and validates
+      # any github-oauth token in the environment. This step surfaces where that token
+      # comes from and its shape (the value stays masked by Actions) when debugging auth errors.
+      - name: Debug Composer github auth
+        run: |
+          HOME_DIR="$(composer config --global home)"
+          echo "global composer home: $HOME_DIR"
+          echo "--- github-oauth in global config? ---"
+          composer config --global --list 2>/dev/null | grep -i 'github-oauth' || echo "none in global config"
+          echo "--- auth.json files present? ---"
+          ls -la "$HOME_DIR/auth.json" ./auth.json 2>/dev/null || echo "no auth.json"
+          echo "--- COMPOSER_* env present? ---"
+          env | grep -iE 'COMPOSER_(AUTH|TOKEN)' | sed 's/=.*/=<set>/' || echo "no COMPOSER_AUTH/TOKEN env"
+          echo "--- token byte-length & hidden chars (value stays masked) ---"
+          printf '%s' "${COMPOSER_TOKEN:-}" | wc -c
+          printf '%s' "${COMPOSER_TOKEN:-}" | cat -A | head -1
+
+      # Prefixing only reads the already-installed composer.json/vendor and needs no GitHub
+      # auth, so clear any (possibly invalid) github-oauth token to keep Composer/Strauss from
+      # rejecting it. Safe because gravityops/core is fetched over SSH (no-api) and the rest are public.
+      - name: Clear Composer github-oauth token
+        run: composer config --global --unset github-oauth.github.com || true
+
       - name: Prefix namespaces (Strauss)
         run: composer run-script prefix-namespaces
 
-      - name: PCP
-        uses: wordpress/plugin-check-action@v1
+      # The following steps inline wordpress/plugin-check-action to work around
+      # https://github.com/WordPress/plugin-check-action/issues/579. The upstream action
+      # auto-generates a .wp-env.json that lists plugin-check as a URL plugin, and on the
+      # ubuntu-24.04 runner image >=20260525.161 (Node.js 24.16.0) @wordpress/env's
+      # URL-download path silently exits 0 without booting Docker, so `wp-env start`
+      # "succeeds" but nothing is running and the check fails with
+      # "Environment not initialized". We generate .wp-env.json without the URL plugin,
+      # pin @wordpress/env, and install plugin-check via wp-cli after boot.
+      # Revert to `uses: wordpress/plugin-check-action@...` once the upstream issue is fixed.
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          exclude-files: ${{ inputs.exclude_files }}
-          ignore-codes: ${{ inputs.ignore_codes }}
+          node-version: '24'
+
+      - name: Setup wp-env
+        env:
+          BUILD_DIR: ./
+        run: |
+          PLUGIN_DIR=$(realpath "$BUILD_DIR")
+          PLUGIN_SLUG=$(basename "$PLUGIN_DIR")
+          echo "PLUGIN_DIR=$PLUGIN_DIR" >> "$GITHUB_ENV"
+          echo "PLUGIN_SLUG=$PLUGIN_SLUG" >> "$GITHUB_ENV"
+
+          # plugin-check is intentionally NOT listed here — its URL download path is where
+          # wp-env silently dies on the new runner image. Installed via wp-cli below instead.
+          cat > .wp-env.json <<EOF
+          {
+            "core": null,
+            "port": 8880,
+            "testsEnvironment": false,
+            "mappings": { "wp-content/plugins/${PLUGIN_SLUG}": "${PLUGIN_DIR}" }
+          }
+          EOF
+
+          # Pin @wordpress/env to a known-good version rather than tracking latest, so a
+          # future wp-env regression can't silently break CI. Bump when picking up fixes.
+          npm -g --no-fund i @wordpress/env@11.6.0
+
+      - name: Start wp-env
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          shell: bash
+          command: wp-env start
+
+      - name: Run Plugin Check
+        env:
+          IGNORE_CODES: ${{ inputs.ignore_codes }}
+          EXCLUDE_FILES: ${{ inputs.exclude_files }}
+        run: |
+          echo "::group::Debugging information"
+          wp-env run cli wp cli info
+          wp-env run cli wp plugin list
+          echo "::endgroup::"
+
+          echo "::group::Install plugin-check"
+          wp-env run cli wp plugin install plugin-check --activate
+          echo "::endgroup::"
+
+          echo "::group::Install dependencies"
+          DEPENDENCIES=$(wp-env run cli wp plugin get "$PLUGIN_SLUG" --field=requires_plugins | tr ',' ' ' | tr -d '\r')
+          if [ -n "${DEPENDENCIES// /}" ]; then
+            echo "Installing plugin dependencies: $DEPENDENCIES"
+            wp-env run cli wp plugin install --activate $DEPENDENCIES
+          else
+            echo "Plugin has no dependencies"
+          fi
+          echo "::endgroup::"
+
+          wp-env run cli wp plugin activate "$PLUGIN_SLUG"
+
+          echo "::group::Run Plugin Check"
+          IGNORE_CODES_CSV="${IGNORE_CODES//$'\n'/,}"
+          EXCLUDE_FILES_CSV="${EXCLUDE_FILES//$'\n'/,}"
+          RESULTS="${RUNNER_TEMP}/plugin-check-results.json"
+          wp-env run cli wp plugin check "$PLUGIN_SLUG" \
+            --format=json \
+            --ignore-codes="$IGNORE_CODES_CSV" \
+            --exclude-files="$EXCLUDE_FILES_CSV" \
+            --slug="$PLUGIN_SLUG" \
+            --require=./wp-content/plugins/plugin-check/cli.php \
+            > "$RESULTS"
+          cat "$RESULTS"
+          echo "::endgroup::"
+
+          # Fail if Plugin Check reported any findings.
+          if [ -s "$RESULTS" ] && [ "$(jq 'length' "$RESULTS")" -gt 0 ]; then
+            echo "::error::Plugin Check reported issues for $PLUGIN_SLUG"
+            exit 1
+          fi
+
+      - name: Upload plugin-check results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-check-results
+          path: ${{ runner.temp }}/plugin-check-results.json
+          if-no-files-found: ignore
 
   get_version:
     needs: pcp
@@ -178,6 +295,11 @@ jobs:
           find vendor -type f -name "*.sh" -delete
           rm -f vendor/trustedlogin/client/bin/build-sass
           rm -f vendor/bin/build-sass
+
+      # See the pcp job: Strauss reads any github-oauth token via Composer's Factory; clear it
+      # since prefixing needs no GitHub auth (gravityops/core is SSH/no-api, the rest are public).
+      - name: Clear Composer github-oauth token
+        run: composer config --global --unset github-oauth.github.com || true
 
       - name: Prefix namespaces (Strauss)
         run: |
