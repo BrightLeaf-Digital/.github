@@ -120,105 +120,18 @@ jobs:
       - name: Prefix namespaces (Strauss)
         run: composer run-script prefix-namespaces
 
-      # The following steps inline wordpress/plugin-check-action to work around
-      # https://github.com/WordPress/plugin-check-action/issues/579. The upstream action
-      # auto-generates a .wp-env.json that lists plugin-check as a URL plugin, and on the
-      # ubuntu-24.04 runner image >=20260525.161 (Node.js 24.16.0) @wordpress/env's
-      # URL-download path silently exits 0 without booting Docker, so `wp-env start`
-      # "succeeds" but nothing is running and the check fails with
-      # "Environment not initialized". We generate .wp-env.json without the URL plugin,
-      # pin @wordpress/env, and install plugin-check via wp-cli after boot.
-      # Revert to `uses: wordpress/plugin-check-action@...` once the upstream issue is fixed.
-      - name: Set up Node
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      # Restored to the upstream action now that WordPress/plugin-check-action#579 is fixed
+      # in v1.1.7 (PR #590), which removes the URL plugin from .wp-env.json, installs
+      # plugin-check via wp-cli after boot, and verifies the environment came up — the same
+      # workaround that was previously inlined here. Pinned to the tag (not @v1) so upstream
+      # churn can't silently reach CI. Note: v1.1.7 installs @wordpress/env unpinned; the
+      # underlying wp-env URL-download bug is still unfixed upstream, but the action's
+      # post-boot `wp cli info` check converts any silent startup failure into a loud one.
+      - name: PCP
+        uses: wordpress/plugin-check-action@v1.1.7
         with:
-          node-version: '24'
-
-      - name: Setup wp-env
-        env:
-          BUILD_DIR: ./
-        run: |
-          PLUGIN_DIR=$(realpath "$BUILD_DIR")
-          PLUGIN_SLUG=$(basename "$PLUGIN_DIR")
-          echo "PLUGIN_DIR=$PLUGIN_DIR" >> "$GITHUB_ENV"
-          echo "PLUGIN_SLUG=$PLUGIN_SLUG" >> "$GITHUB_ENV"
-
-          # plugin-check is intentionally NOT listed here — its URL download path is where
-          # wp-env silently dies on the new runner image. Installed via wp-cli below instead.
-          cat > .wp-env.json <<EOF
-          {
-            "core": null,
-            "port": 8880,
-            "testsEnvironment": false,
-            "mappings": { "wp-content/plugins/${PLUGIN_SLUG}": "${PLUGIN_DIR}" }
-          }
-          EOF
-
-          # Pin @wordpress/env to a known-good version rather than tracking latest, so a
-          # future wp-env regression can't silently break CI. Bump when picking up fixes.
-          npm -g --no-fund i @wordpress/env@11.6.0
-
-      - name: Start wp-env
-        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
-        with:
-          timeout_minutes: 10
-          max_attempts: 3
-          shell: bash
-          command: wp-env start
-
-      - name: Run Plugin Check
-        env:
-          IGNORE_CODES: ${{ inputs.ignore_codes }}
-          EXCLUDE_FILES: ${{ inputs.exclude_files }}
-        run: |
-          echo "::group::Debugging information"
-          wp-env run cli wp cli info
-          wp-env run cli wp plugin list
-          echo "::endgroup::"
-
-          echo "::group::Install plugin-check"
-          wp-env run cli wp plugin install plugin-check --activate
-          echo "::endgroup::"
-
-          echo "::group::Install dependencies"
-          DEPENDENCIES=$(wp-env run cli wp plugin get "$PLUGIN_SLUG" --field=requires_plugins | tr ',' ' ' | tr -d '\r')
-          if [ -n "${DEPENDENCIES// /}" ]; then
-            echo "Installing plugin dependencies: $DEPENDENCIES"
-            wp-env run cli wp plugin install --activate $DEPENDENCIES
-          else
-            echo "Plugin has no dependencies"
-          fi
-          echo "::endgroup::"
-
-          wp-env run cli wp plugin activate "$PLUGIN_SLUG"
-
-          echo "::group::Run Plugin Check"
-          IGNORE_CODES_CSV="${IGNORE_CODES//$'\n'/,}"
-          EXCLUDE_FILES_CSV="${EXCLUDE_FILES//$'\n'/,}"
-          RESULTS="${RUNNER_TEMP}/plugin-check-results.json"
-          wp-env run cli wp plugin check "$PLUGIN_SLUG" \
-            --format=json \
-            --ignore-codes="$IGNORE_CODES_CSV" \
-            --exclude-files="$EXCLUDE_FILES_CSV" \
-            --slug="$PLUGIN_SLUG" \
-            --require=./wp-content/plugins/plugin-check/cli.php \
-            > "$RESULTS"
-          cat "$RESULTS"
-          echo "::endgroup::"
-
-          # Fail if Plugin Check reported any findings.
-          if [ -s "$RESULTS" ] && [ "$(jq 'length' "$RESULTS")" -gt 0 ]; then
-            echo "::error::Plugin Check reported issues for $PLUGIN_SLUG"
-            exit 1
-          fi
-
-      - name: Upload plugin-check results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: plugin-check-results
-          path: ${{ runner.temp }}/plugin-check-results.json
-          if-no-files-found: ignore
+          exclude-files: ${{ inputs.exclude_files }}
+          ignore-codes: ${{ inputs.ignore_codes }}
 
   get_version:
     needs: pcp
@@ -287,9 +200,10 @@ jobs:
       - name: Prefix namespaces (Strauss)
         run: |
           mkdir -p bin
-          # Use a specific version that is known to have a phar
+          # Pin to a specific version known to ship a phar — Strauss releases have not always
+          # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
           # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
-          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.27.0/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.27.3/strauss.phar -o bin/strauss.phar
           php bin/strauss.phar
           rm -rf bin
           composer dump-autoload
