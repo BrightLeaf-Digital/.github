@@ -118,7 +118,15 @@ jobs:
         run: composer config --global --unset github-oauth.github.com || true
 
       - name: Prefix namespaces (Strauss)
-        run: composer run-script prefix-namespaces
+        run: |
+          mkdir -p bin
+          # Pin to a specific version known to ship a phar — Strauss releases have not always
+          # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
+          # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.27.3/strauss.phar -o bin/strauss.phar
+          php bin/strauss.phar
+          rm -rf bin
+          composer dump-autoload
 
       # Restored to the upstream action now that WordPress/plugin-check-action#579 is fixed
       # in v1.1.7 (PR #590), which removes the URL plugin from .wp-env.json, installs
