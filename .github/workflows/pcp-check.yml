@@ -10,11 +10,28 @@ on:
         default: |
           .gitignore
           .wp-env.json
+      exclude_directories:
+        description: 'Directories to exclude from the check'
+        type: string
+        required: false
+        # Plugin Check's own defaults are replaced when this is passed, so .git/vendor/
+        # node_modules have to be repeated here. tests/ never ships (see zip_files), so
+        # linting it only produces noise about stubs and fixtures.
+        default: |
+          .git
+          vendor
+          node_modules
+          tests
       ignore_codes:
         description: 'Ignore codes for the check'
         type: string
         required: false
-        default: 'WordPress.DateTime.RestrictedFunctions.date_date'
+        # DisallowShortOpenTag.EchoFound: `<?= ?>` is the suite's preferred style for simple
+        # inline output (see AGENTS.md) and is always available since PHP 5.4 regardless of
+        # the short_open_tag ini setting, so the sniff is a WPCS style preference we opt out of.
+        default: |
+          WordPress.DateTime.RestrictedFunctions.date_date
+          Generic.PHP.DisallowShortOpenTag.EchoFound
       plugin_slug:
         description: 'The slug of the plugin on WordPress.org and Freemius'
         required: true
@@ -139,6 +156,7 @@ jobs:
         uses: wordpress/plugin-check-action@v1.1.7
         with:
           exclude-files: ${{ inputs.exclude_files }}
+          exclude-directories: ${{ inputs.exclude_directories }}
           ignore-codes: ${{ inputs.ignore_codes }}
 
   get_version:
@@ -253,7 +271,9 @@ jobs:
             fi
           else
             # Local build logic using zip_files
-            # We use a temp zip to respect the zip_files patterns and wildcards accurately
+            # We use a temp zip to respect the zip_files patterns and wildcards accurately.
+            # build/ is only created by the Create Zip step, which is skipped on this path.
+            mkdir -p build
             zip -r build/local-plugin.zip ${{ inputs.zip_files }}
             unzip build/local-plugin.zip -d plugin-dir
           fi
