@@ -152,7 +152,7 @@ jobs:
       # the underlying wp-env URL-download bug is still unfixed upstream, but the action's
       # post-boot `wp cli info` check converts any silent startup failure into a loud one.
       - name: PCP
-        uses: wordpress/plugin-check-action@v1.1.8
+        uses: wordpress/plugin-check-action@v1.1.9
         with:
           exclude-files: ${{ inputs.exclude_files }}
           exclude-directories: ${{ inputs.exclude_directories }}
