@@ -139,7 +139,7 @@ jobs:
           # Pin to a specific version known to ship a phar — Strauss releases have not always
           # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
           # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
-          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.28.1/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.0/strauss.phar -o bin/strauss.phar
           php bin/strauss.phar
           rm -rf bin
           composer dump-autoload
@@ -148,11 +148,11 @@ jobs:
       # in v1.1.7 (PR #590), which removes the URL plugin from .wp-env.json, installs
       # plugin-check via wp-cli after boot, and verifies the environment came up — the same
       # workaround that was previously inlined here. Pinned to the tag (not @v1) so upstream
-      # churn can't silently reach CI. Note: v1.1.7 installs @wordpress/env unpinned; the
-      # underlying wp-env URL-download bug is still unfixed upstream, but the action's
+      # churn can't silently reach CI. Note: v1.1.8 still installs @wordpress/env unpinned;
+      # the underlying wp-env URL-download bug is still unfixed upstream, but the action's
       # post-boot `wp cli info` check converts any silent startup failure into a loud one.
       - name: PCP
-        uses: wordpress/plugin-check-action@v1.1.7
+        uses: wordpress/plugin-check-action@v1.1.8
         with:
           exclude-files: ${{ inputs.exclude_files }}
           exclude-directories: ${{ inputs.exclude_directories }}
@@ -228,7 +228,7 @@ jobs:
           # Pin to a specific version known to ship a phar — Strauss releases have not always
           # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
           # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
-          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.28.1/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.0/strauss.phar -o bin/strauss.phar
           php bin/strauss.phar
           rm -rf bin
           composer dump-autoload
