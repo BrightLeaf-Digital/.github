@@ -139,7 +139,7 @@ jobs:
           # Pin to a specific version known to ship a phar — Strauss releases have not always
           # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
           # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
-          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.0/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.1/strauss.phar -o bin/strauss.phar
           php bin/strauss.phar
           rm -rf bin
           composer dump-autoload
@@ -228,7 +228,7 @@ jobs:
           # Pin to a specific version known to ship a phar — Strauss releases have not always
           # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
           # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
-          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.0/strauss.phar -o bin/strauss.phar
+          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.1/strauss.phar -o bin/strauss.phar
           php bin/strauss.phar
           rm -rf bin
           composer dump-autoload
