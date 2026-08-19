@@ -3,27 +3,38 @@ name: 'PCP Check and Deploy'
 on:
   workflow_call:
     inputs:
+      # These three are the SUITE-WIDE defaults, and the same lists live in
+      # scripts/pcp-check.sh so a local run and a CI run agree — change them together.
+      # Anything a single plugin needs on top belongs in that plugin's own pcp.json,
+      # which the "Resolve PCP config" step below merges into these. Passing one of
+      # these inputs from a caller REPLACES the list rather than adding to it, which is
+      # how kanban silently lost date_date, so prefer pcp.json.
       exclude_files:
-        description: 'Files to exclude from the check'
+        description: 'Files to exclude from the check (suite-wide; per-plugin additions go in pcp.json)'
         type: string
         required: false
+        # .phpunit.result.cache is a local, gitignored artifact; it is listed so a local
+        # run and a CI run resolve to the same set.
         default: |
           .gitignore
           .wp-env.json
+          .phpunit.result.cache
       exclude_directories:
-        description: 'Directories to exclude from the check'
+        description: 'Directories to exclude from the check (suite-wide; per-plugin additions go in pcp.json)'
         type: string
         required: false
         # Plugin Check's own defaults are replaced when this is passed, so .git/vendor/
         # node_modules have to be repeated here. tests/ never ships (see zip_files), so
-        # linting it only produces noise about stubs and fixtures.
+        # linting it only produces noise about stubs and fixtures. .github never ships
+        # either, and PCP flags its presence.
         default: |
           .git
           vendor
           node_modules
           tests
+          .github
       ignore_codes:
-        description: 'Ignore codes for the check'
+        description: 'Ignore codes for the check (suite-wide; per-plugin additions go in pcp.json)'
         type: string
         required: false
         # DisallowShortOpenTag.EchoFound: `<?= ?>` is the suite's preferred style for simple
@@ -144,6 +155,81 @@ jobs:
           rm -rf bin
           composer dump-autoload
 
+      # Per-plugin PCP config, merged into the suite-wide defaults above rather than
+      # replacing them. The plugin's own repo is the only place both this workflow and
+      # scripts/pcp-check.sh can read, since a reusable workflow runs inside the
+      # caller's checkout and cannot see the scripts repo.
+      - name: Resolve PCP config
+        id: pcp_config
+        env:
+          DEFAULT_IGNORE_CODES: ${{ inputs.ignore_codes }}
+          DEFAULT_EXCLUDE_DIRECTORIES: ${{ inputs.exclude_directories }}
+          DEFAULT_EXCLUDE_FILES: ${{ inputs.exclude_files }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Values reach the action newline-separated, but callers have historically
+          # passed comma-separated strings too, so both are accepted on the way in and
+          # normalized to newlines on the way out.
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+          import sys
+
+          FIELDS = ("ignore_codes", "exclude_directories", "exclude_files")
+          CONFIG_FILE = "pcp.json"
+
+          resolved = {}
+          for field in FIELDS:
+              raw = os.environ.get(f"DEFAULT_{field.upper()}", "")
+              values = []
+              for chunk in raw.replace(",", "\n").splitlines():
+                  chunk = chunk.strip()
+                  if chunk and chunk not in values:
+                      values.append(chunk)
+              resolved[field] = values
+
+          if os.path.isfile(CONFIG_FILE):
+              try:
+                  with open(CONFIG_FILE, encoding="utf-8") as handle:
+                      data = json.load(handle)
+              except json.JSONDecodeError as error:
+                  sys.exit(f"::error file={CONFIG_FILE}::invalid JSON — {error}")
+
+              if not isinstance(data, dict):
+                  sys.exit(f"::error file={CONFIG_FILE}::must contain a JSON object")
+
+              # A typo'd key would otherwise be ignored in silence, leaving someone sure
+              # they had configured something they had not.
+              unknown = sorted(set(data) - set(FIELDS) - {"note"})
+              if unknown:
+                  sys.exit(
+                      f"::error file={CONFIG_FILE}::unknown key(s) {', '.join(unknown)}. "
+                      f"Valid keys: {', '.join(FIELDS)}, note"
+                  )
+
+              for field in FIELDS:
+                  extra = data.get(field, [])
+                  if not isinstance(extra, list):
+                      sys.exit(f'::error file={CONFIG_FILE}::"{field}" must be an array')
+                  for value in extra:
+                      value = str(value).strip()
+                      if value and value not in resolved[field]:
+                          resolved[field].append(value)
+
+              print(f"Merged {CONFIG_FILE} into the suite defaults.", file=sys.stderr)
+          else:
+              print(f"No {CONFIG_FILE}; using suite defaults.", file=sys.stderr)
+
+          for field in FIELDS:
+              print(f"{field}<<EOF_{field.upper()}")
+              for value in resolved[field]:
+                  print(value)
+              print(f"EOF_{field.upper()}")
+              print(f"  {field}: {resolved[field]}", file=sys.stderr)
+          PY
+
       # Restored to the upstream action now that WordPress/plugin-check-action#579 is fixed
       # in v1.1.7 (PR #590), which removes the URL plugin from .wp-env.json, installs
       # plugin-check via wp-cli after boot, and verifies the environment came up — the same
@@ -154,9 +240,9 @@ jobs:
       - name: PCP
         uses: wordpress/plugin-check-action@v1.1.9
         with:
-          exclude-files: ${{ inputs.exclude_files }}
-          exclude-directories: ${{ inputs.exclude_directories }}
-          ignore-codes: ${{ inputs.ignore_codes }}
+          exclude-files: ${{ steps.pcp_config.outputs.exclude_files }}
+          exclude-directories: ${{ steps.pcp_config.outputs.exclude_directories }}
+          ignore-codes: ${{ steps.pcp_config.outputs.ignore_codes }}
 
   get_version:
     needs: pcp
