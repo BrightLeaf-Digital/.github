@@ -1,48 +1,28 @@
-name: 'PCP Check and Deploy'
+name: 'Deploy'
+
+# Builds the release artifact and ships it to Freemius and WordPress.org. It no
+# longer checks anything.
+#
+# Quality gating — PHPCS, each plugin's test suite, and Plugin Check — moved to
+# scripts/preflight.sh, which tag-plugins.sh runs BEFORE it commits and tags. The
+# check was worth little here and cost a lot: it fired on the pushed tag, so a
+# failure left the tag already on origin with the release half-done, and it could
+# only ever run Plugin Check, never PHPCS or the tests, because CI works inside a
+# single plugin's checkout and cannot read the scripts/ or root repos. Strauss writes
+# its prefixed output into vendor/, which the check excludes, so it never saw
+# anything the local run does not.
+#
+# The suite-wide exclude_files / exclude_directories / ignore_codes inputs went with
+# it; those lists now live only in scripts/pcp-check.sh, which ends the requirement
+# to keep two copies in step. Per-plugin pcp.json still works and is still merged
+# there. No caller ever passed the three inputs, so removing them breaks nothing.
+#
+# The file keeps its pcp-check.yml name because all 15 caller workflows reference it
+# by path; renaming it would mean editing every plugin repo for cosmetics.
 
 on:
   workflow_call:
     inputs:
-      # These three are the SUITE-WIDE defaults, and the same lists live in
-      # scripts/pcp-check.sh so a local run and a CI run agree — change them together.
-      # Anything a single plugin needs on top belongs in that plugin's own pcp.json,
-      # which the "Resolve PCP config" step below merges into these. Passing one of
-      # these inputs from a caller REPLACES the list rather than adding to it, which is
-      # how kanban silently lost date_date, so prefer pcp.json.
-      exclude_files:
-        description: 'Files to exclude from the check (suite-wide; per-plugin additions go in pcp.json)'
-        type: string
-        required: false
-        # .phpunit.result.cache is a local, gitignored artifact; it is listed so a local
-        # run and a CI run resolve to the same set.
-        default: |
-          .gitignore
-          .wp-env.json
-          .phpunit.result.cache
-      exclude_directories:
-        description: 'Directories to exclude from the check (suite-wide; per-plugin additions go in pcp.json)'
-        type: string
-        required: false
-        # Plugin Check's own defaults are replaced when this is passed, so .git/vendor/
-        # node_modules have to be repeated here. tests/ never ships (see zip_files), so
-        # linting it only produces noise about stubs and fixtures. .github never ships
-        # either, and PCP flags its presence.
-        default: |
-          .git
-          vendor
-          node_modules
-          tests
-          .github
-      ignore_codes:
-        description: 'Ignore codes for the check (suite-wide; per-plugin additions go in pcp.json)'
-        type: string
-        required: false
-        # DisallowShortOpenTag.EchoFound: `<?= ?>` is the suite's preferred style for simple
-        # inline output (see AGENTS.md) and is always available since PHP 5.4 regardless of
-        # the short_open_tag ini setting, so the sniff is a WPCS style preference we opt out of.
-        default: |
-          WordPress.DateTime.RestrictedFunctions.date_date
-          Generic.PHP.DisallowShortOpenTag.EchoFound
       plugin_slug:
         description: 'The slug of the plugin on WordPress.org and Freemius'
         required: true
@@ -112,145 +92,7 @@ on:
         required: true
 
 jobs:
-  pcp:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: '8.3'
-          tools: composer
-
-      - name: Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.10.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY_GRAVITYOPS_CORE }}
-
-      - name: Install Production Dependencies
-        run: |
-          composer config repositories.gravityops-local --unset
-          composer config minimum-stability stable
-          composer config prefer-stable true
-          CORE_VERSION=$(jq -r '.require["gravityops/core"]' composer.json)
-          composer require "gravityops/core:${CORE_VERSION}@stable" --update-no-dev --no-progress --optimize-autoloader --no-interaction
-
-      - name: Cleanup Vendor
-        run: |
-          find vendor -type f -name "*.sh" -delete
-          rm -f vendor/trustedlogin/client/bin/build-sass
-          rm -f vendor/bin/build-sass
-
-      # Prefixing only reads the already-installed composer.json/vendor and needs no GitHub
-      # auth, so clear any (possibly invalid) github-oauth token to keep Composer/Strauss from
-      # rejecting it. Safe because gravityops/core is fetched over SSH (no-api) and the rest are public.
-      - name: Clear Composer github-oauth token
-        run: composer config --global --unset github-oauth.github.com || true
-
-      - name: Prefix namespaces (Strauss)
-        run: |
-          mkdir -p bin
-          # Pin to a specific version known to ship a phar — Strauss releases have not always
-          # included the phar asset, so tracking `latest` can break deploys. Bump deliberately.
-          # curl -fSL https://github.com/BrianHenryIE/strauss/releases/latest/download/strauss.phar -o bin/strauss.phar
-          curl -fSL https://github.com/BrianHenryIE/strauss/releases/download/0.29.1/strauss.phar -o bin/strauss.phar
-          php bin/strauss.phar
-          rm -rf bin
-          composer dump-autoload
-
-      # Per-plugin PCP config, merged into the suite-wide defaults above rather than
-      # replacing them. The plugin's own repo is the only place both this workflow and
-      # scripts/pcp-check.sh can read, since a reusable workflow runs inside the
-      # caller's checkout and cannot see the scripts repo.
-      - name: Resolve PCP config
-        id: pcp_config
-        env:
-          DEFAULT_IGNORE_CODES: ${{ inputs.ignore_codes }}
-          DEFAULT_EXCLUDE_DIRECTORIES: ${{ inputs.exclude_directories }}
-          DEFAULT_EXCLUDE_FILES: ${{ inputs.exclude_files }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          # Values reach the action newline-separated, but callers have historically
-          # passed comma-separated strings too, so both are accepted on the way in and
-          # normalized to newlines on the way out.
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          import os
-          import sys
-
-          FIELDS = ("ignore_codes", "exclude_directories", "exclude_files")
-          CONFIG_FILE = "pcp.json"
-
-          resolved = {}
-          for field in FIELDS:
-              raw = os.environ.get(f"DEFAULT_{field.upper()}", "")
-              values = []
-              for chunk in raw.replace(",", "\n").splitlines():
-                  chunk = chunk.strip()
-                  if chunk and chunk not in values:
-                      values.append(chunk)
-              resolved[field] = values
-
-          if os.path.isfile(CONFIG_FILE):
-              try:
-                  with open(CONFIG_FILE, encoding="utf-8") as handle:
-                      data = json.load(handle)
-              except json.JSONDecodeError as error:
-                  sys.exit(f"::error file={CONFIG_FILE}::invalid JSON — {error}")
-
-              if not isinstance(data, dict):
-                  sys.exit(f"::error file={CONFIG_FILE}::must contain a JSON object")
-
-              # A typo'd key would otherwise be ignored in silence, leaving someone sure
-              # they had configured something they had not.
-              unknown = sorted(set(data) - set(FIELDS) - {"note"})
-              if unknown:
-                  sys.exit(
-                      f"::error file={CONFIG_FILE}::unknown key(s) {', '.join(unknown)}. "
-                      f"Valid keys: {', '.join(FIELDS)}, note"
-                  )
-
-              for field in FIELDS:
-                  extra = data.get(field, [])
-                  if not isinstance(extra, list):
-                      sys.exit(f'::error file={CONFIG_FILE}::"{field}" must be an array')
-                  for value in extra:
-                      value = str(value).strip()
-                      if value and value not in resolved[field]:
-                          resolved[field].append(value)
-
-              print(f"Merged {CONFIG_FILE} into the suite defaults.", file=sys.stderr)
-          else:
-              print(f"No {CONFIG_FILE}; using suite defaults.", file=sys.stderr)
-
-          for field in FIELDS:
-              print(f"{field}<<EOF_{field.upper()}")
-              for value in resolved[field]:
-                  print(value)
-              print(f"EOF_{field.upper()}")
-              print(f"  {field}: {resolved[field]}", file=sys.stderr)
-          PY
-
-      # Restored to the upstream action now that WordPress/plugin-check-action#579 is fixed
-      # in v1.1.7 (PR #590), which removes the URL plugin from .wp-env.json, installs
-      # plugin-check via wp-cli after boot, and verifies the environment came up — the same
-      # workaround that was previously inlined here. Pinned to the tag (not @v1) so upstream
-      # churn can't silently reach CI. Note: v1.1.8 still installs @wordpress/env unpinned;
-      # the underlying wp-env URL-download bug is still unfixed upstream, but the action's
-      # post-boot `wp cli info` check converts any silent startup failure into a loud one.
-      - name: PCP
-        uses: wordpress/plugin-check-action@v1.1.9
-        with:
-          exclude-files: ${{ steps.pcp_config.outputs.exclude_files }}
-          exclude-directories: ${{ steps.pcp_config.outputs.exclude_directories }}
-          ignore-codes: ${{ steps.pcp_config.outputs.ignore_codes }}
-
   get_version:
-    needs: pcp
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}
@@ -276,7 +118,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: [pcp, get_version]
+    needs: [get_version]
     if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
     runs-on: ubuntu-latest
     # Surfaced so the notify job can report Freemius and WP.org independently
@@ -560,11 +402,12 @@ jobs:
             echo "No docs/ directory found. Skipping documentation sync."
           fi
 
-  # Fires whether or not deploy ran, so a release that dies in PCP still reports.
-  # Stays quiet on a check-only run (no tag, no version) that passed.
+  # Fires whether or not deploy ran. Quality gating moved to scripts/preflight.sh,
+  # which runs before the tag exists, so there is no longer a check job that can fail
+  # here — a run with no version is simply not a release and has nothing to report.
   notify:
-    needs: [pcp, get_version, deploy]
-    if: ${{ always() && ( needs.get_version.outputs.version != '' || needs.pcp.result != 'success' ) }}
+    needs: [get_version, deploy]
+    if: ${{ always() && needs.get_version.outputs.version != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Notify Slack — run complete
@@ -574,7 +417,6 @@ jobs:
           API_KEY: ${{ secrets.BLD_API_KEY }}
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
           VERSION: ${{ needs.get_version.outputs.version }}
-          PCP_RESULT: ${{ needs.pcp.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           FREEMIUS_RESULT: ${{ needs.deploy.outputs.freemius }}
           WPORG_RESULT: ${{ needs.deploy.outputs.wporg }}
@@ -587,7 +429,6 @@ jobs:
             --arg plugin_slug "$PLUGIN_SLUG" \
             --arg version "$VERSION" \
             --arg run_url "$RUN_URL" \
-            --arg pcp "$PCP_RESULT" \
             --arg deploy "$DEPLOY_RESULT" \
             --arg freemius "$FREEMIUS_RESULT" \
             --arg wporg "$WPORG_RESULT" \
@@ -596,7 +437,7 @@ jobs:
                version: $version,
                stage: "run",
                run_url: $run_url,
-               stages: ({pcp: $pcp, freemius: $freemius, wporg: $wporg, deploy: $deploy}
+               stages: ({freemius: $freemius, wporg: $wporg, deploy: $deploy}
                         | with_entries(select(.value != "")))
              }' \
           | curl -sS -X POST "$NOTIFY_URL" \
