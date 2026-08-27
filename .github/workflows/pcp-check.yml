@@ -87,6 +87,11 @@ on:
         required: false
         type: string
         default: 'https://brightleafdigital.io/wp-json/bld/v1/sync-docs'
+      release_notify_url:
+        description: 'URL that turns release milestones into a Slack DM'
+        required: false
+        type: string
+        default: 'https://brightleafdigital.io/wp-json/bld/v1/release-notify'
 
     secrets:
       BLD_API_KEY:
@@ -274,6 +279,11 @@ jobs:
     needs: [pcp, get_version]
     if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
     runs-on: ubuntu-latest
+    # Surfaced so the notify job can report Freemius and WP.org independently
+    # rather than collapsing both into one job result.
+    outputs:
+      freemius: ${{ steps.freemius_deploy.outcome }}
+      wporg: ${{ steps.wporg_deploy.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -344,6 +354,31 @@ jobs:
           PLUGIN_SLUG: ${{ inputs.plugin_slug }}
           PLUGIN_ID: ${{ inputs.plugin_id }}
 
+      # always() so a failed upload still reports; the job still aborts afterwards
+      # because the steps below carry no such condition. continue-on-error keeps a
+      # Slack outage from turning a good release red.
+      - name: Notify Slack — Freemius
+        if: ${{ always() && inputs.deploy_to_freemius && steps.freemius_deploy.outcome != 'skipped' }}
+        continue-on-error: true
+        env:
+          NOTIFY_URL: ${{ inputs.release_notify_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          VERSION: ${{ needs.get_version.outputs.version }}
+          STATUS: ${{ steps.freemius_deploy.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n \
+            --arg plugin_slug "$PLUGIN_SLUG" \
+            --arg version "$VERSION" \
+            --arg status "$STATUS" \
+            --arg run_url "$RUN_URL" \
+            '{plugin_slug: $plugin_slug, version: $version, stage: "freemius", status: $status, run_url: $run_url}' \
+          | curl -sS -X POST "$NOTIFY_URL" \
+              -H "x-api-key: $API_KEY" \
+              -H "Content-Type: application/json" \
+              --data @-
+
       - name: Prepare Plugin Directory for WP.org
         if: ${{ inputs.deploy_to_wp }}
         run: |
@@ -384,6 +419,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y subversion
 
       - name: Deploy to WordPress.org SVN
+        id: wporg_deploy
         if: ${{ inputs.deploy_to_wp }}
         env:
           SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
@@ -469,6 +505,28 @@ jobs:
             echo "Tagged $VERSION"
           fi
 
+      - name: Notify Slack — WordPress.org
+        if: ${{ always() && inputs.deploy_to_wp && steps.wporg_deploy.outcome != 'skipped' }}
+        continue-on-error: true
+        env:
+          NOTIFY_URL: ${{ inputs.release_notify_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          VERSION: ${{ needs.get_version.outputs.version }}
+          STATUS: ${{ steps.wporg_deploy.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          jq -n \
+            --arg plugin_slug "$PLUGIN_SLUG" \
+            --arg version "$VERSION" \
+            --arg status "$STATUS" \
+            --arg run_url "$RUN_URL" \
+            '{plugin_slug: $plugin_slug, version: $version, stage: "wporg", status: $status, run_url: $run_url}' \
+          | curl -sS -X POST "$NOTIFY_URL" \
+              -H "x-api-key: $API_KEY" \
+              -H "Content-Type: application/json" \
+              --data @-
+
       - name: Notify Update Feed
         run: |
           VERSION="${{ needs.get_version.outputs.version }}"
@@ -501,3 +559,47 @@ jobs:
           else
             echo "No docs/ directory found. Skipping documentation sync."
           fi
+
+  # Fires whether or not deploy ran, so a release that dies in PCP still reports.
+  # Stays quiet on a check-only run (no tag, no version) that passed.
+  notify:
+    needs: [pcp, get_version, deploy]
+    if: ${{ always() && ( needs.get_version.outputs.version != '' || needs.pcp.result != 'success' ) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack — run complete
+        continue-on-error: true
+        env:
+          NOTIFY_URL: ${{ inputs.release_notify_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          VERSION: ${{ needs.get_version.outputs.version }}
+          PCP_RESULT: ${{ needs.pcp.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          FREEMIUS_RESULT: ${{ needs.deploy.outputs.freemius }}
+          WPORG_RESULT: ${{ needs.deploy.outputs.wporg }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Stages a run never reached come back empty; drop them so the summary
+          # lists what actually happened instead of a column of question marks.
+          # The overall verdict is derived from these server-side.
+          jq -n \
+            --arg plugin_slug "$PLUGIN_SLUG" \
+            --arg version "$VERSION" \
+            --arg run_url "$RUN_URL" \
+            --arg pcp "$PCP_RESULT" \
+            --arg deploy "$DEPLOY_RESULT" \
+            --arg freemius "$FREEMIUS_RESULT" \
+            --arg wporg "$WPORG_RESULT" \
+            '{
+               plugin_slug: $plugin_slug,
+               version: $version,
+               stage: "run",
+               run_url: $run_url,
+               stages: ({pcp: $pcp, freemius: $freemius, wporg: $wporg, deploy: $deploy}
+                        | with_entries(select(.value != "")))
+             }' \
+          | curl -sS -X POST "$NOTIFY_URL" \
+              -H "x-api-key: $API_KEY" \
+              -H "Content-Type: application/json" \
+              --data @-
