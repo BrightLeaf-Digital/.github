@@ -3,7 +3,7 @@ name: 'Update WordPress.org Assets'
 # Reusable workflow: pushes a plugin's marketing assets (icon, banner, screenshots)
 # to the WordPress.org SVN /assets/ directory. This is decoupled from releases —
 # /assets lives outside /trunk and /tags, so refreshing an icon or banner does NOT
-# require a version bump or a new tag. Uses raw svn commands (mirrors pcp-check.yml).
+# require a version bump or a new tag. Uses raw svn commands (mirrors deploy.yml).
 
 on:
   workflow_call:

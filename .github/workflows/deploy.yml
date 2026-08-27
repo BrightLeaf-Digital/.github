@@ -17,8 +17,9 @@ name: 'Deploy'
 # to keep two copies in step. Per-plugin pcp.json still works and is still merged
 # there. No caller ever passed the three inputs, so removing them breaks nothing.
 #
-# The file keeps its pcp-check.yml name because all 15 caller workflows reference it
-# by path; renaming it would mean editing every plugin repo for cosmetics.
+# Renamed from pcp-check.yml. Callers reference a reusable workflow by path, so this
+# file and the 15 caller workflows have to be pushed together — a tag pushed while
+# only one side has landed resolves to a workflow that is not there.
 
 on:
   workflow_call:
