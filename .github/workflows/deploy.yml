@@ -370,19 +370,12 @@ jobs:
               -H "Content-Type: application/json" \
               --data @-
 
-      - name: Notify Update Feed
-        run: |
-          VERSION="${{ needs.get_version.outputs.version }}"
-          CHANGELOG=$(sed -n "/= $VERSION.*=/,/= /p" readme.txt | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
-          curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
-            -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d "{
-            \"item_updated\": \"${{ inputs.update_feed_item_key }}\",
-            \"version\": \"$VERSION\",
-            \"changelog\": \"$CHANGELOG\"
-          }"
-
+      # Docs sync runs before the update-feed notification. Syncing creates a new
+      # plugin's docs category, and the changelog page that hangs off it; the
+      # notification stores the changelog on that page and is refused with a 422
+      # when it does not exist yet. The other way round, a plugin's first release
+      # silently lost its changelog entry (GOAIF 1.0.0), because curl does not fail
+      # the step on an HTTP error.
       - name: Setup Pandoc
         uses: r-lib/actions/setup-pandoc@v2
 
@@ -402,6 +395,19 @@ jobs:
           else
             echo "No docs/ directory found. Skipping documentation sync."
           fi
+
+      - name: Notify Update Feed
+        run: |
+          VERSION="${{ needs.get_version.outputs.version }}"
+          CHANGELOG=$(sed -n "/= $VERSION.*=/,/= /p" readme.txt | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
+          curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
+            -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d "{
+            \"item_updated\": \"${{ inputs.update_feed_item_key }}\",
+            \"version\": \"$VERSION\",
+            \"changelog\": \"$CHANGELOG\"
+          }"
 
   # Fires whether or not deploy ran. Quality gating moved to scripts/preflight.sh,
   # which runs before the tag exists, so there is no longer a check job that can fail
