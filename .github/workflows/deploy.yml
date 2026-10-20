@@ -399,7 +399,11 @@ jobs:
       - name: Notify Update Feed
         run: |
           VERSION="${{ needs.get_version.outputs.version }}"
-          CHANGELOG=$(sed -n "/= $VERSION.*=/,/= /p" readme.txt | sed '1d;$d' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
+          # Print the lines after this version's "= x.y.z … =" heading, up to the next
+          # version or section heading. The old sed range deleted its last line on the
+          # assumption that it was the next heading; for a plugin's only entry there
+          # is none, so it dropped the entry's last bullet (GOCSM 1.0.0 shipped empty).
+          CHANGELOG=$(awk -v v="$VERSION" '/^==/ { if (found) exit } /^= / { if (found) exit; if (index($0, "= " v " ") == 1) { found = 1; next } } found' readme.txt | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
           curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
             -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
             -H "Content-Type: application/json" \
