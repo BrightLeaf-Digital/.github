@@ -69,7 +69,7 @@ on:
         type: string
         default: 'https://brightleafdigital.io/wp-json/bld/v1/sync-docs'
       release_notify_url:
-        description: 'URL that turns release milestones into a Slack DM'
+        description: 'URL that turns release milestones into Slack messages'
         required: false
         type: string
         default: 'https://brightleafdigital.io/wp-json/bld/v1/release-notify'
@@ -421,6 +421,15 @@ jobs:
     if: ${{ always() && needs.get_version.outputs.version != '' }}
     runs-on: ubuntu-latest
     steps:
+      # Read the same commit that was deployed. A checkout failure must not stop
+      # the status notification from reporting the release outcome.
+      - name: Checkout release changelog
+        uses: actions/checkout@v6
+        continue-on-error: true
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Notify Slack — run complete
         continue-on-error: true
         env:
@@ -433,12 +442,32 @@ jobs:
           WPORG_RESULT: ${{ needs.deploy.outputs.wporg }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          CHANGELOG=''
+          if [ -f readme.txt ]; then
+            # Match this exact version inside Changelog, preserving bullet lines
+            # through EOF when this is the plugin's only release entry.
+            CHANGELOG=$(awk -v v="$VERSION" '
+              { sub(/\r$/, "") }
+              /^== Changelog ==[[:space:]]*$/ { in_changelog = 1; next }
+              /^==/ { if (in_changelog) exit }
+              in_changelog && /^= / {
+                if (found) exit
+                if ($2 == v) { found = 1; next }
+              }
+              found { print }
+            ' readme.txt)
+          fi
+          if [ -z "$CHANGELOG" ]; then
+            echo '::warning::Release changelog unavailable; sending status without it.'
+          fi
+
           # Stages a run never reached come back empty; drop them so the summary
           # lists what actually happened instead of a column of question marks.
           # The overall verdict is derived from these server-side.
           jq -n \
             --arg plugin_slug "$PLUGIN_SLUG" \
             --arg version "$VERSION" \
+            --arg changelog "$CHANGELOG" \
             --arg run_url "$RUN_URL" \
             --arg deploy "$DEPLOY_RESULT" \
             --arg freemius "$FREEMIUS_RESULT" \
@@ -446,6 +475,7 @@ jobs:
             '{
                plugin_slug: $plugin_slug,
                version: $version,
+               changelog: $changelog,
                stage: "run",
                run_url: $run_url,
                stages: ({freemius: $freemius, wporg: $wporg, deploy: $deploy}
