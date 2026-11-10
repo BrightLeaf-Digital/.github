@@ -4,12 +4,15 @@ name: 'Update WordPress.org Assets'
 # to the WordPress.org SVN /assets/ directory. This is decoupled from releases —
 # /assets lives outside /trunk and /tags, so refreshing an icon or banner does NOT
 # require a version bump or a new tag. Uses raw svn commands (mirrors deploy.yml).
+#
+# The WordPress.org slug is read from the GravityOps Release Service by product_id,
+# like deploy.yml; callers no longer repeat it.
 
 on:
   workflow_call:
     inputs:
-      plugin_slug:
-        description: 'The plugin slug on WordPress.org (its SVN repo name).'
+      product_id:
+        description: 'Stable GravityOps product ID; its WordPress.org slug is read from the Release Service'
         required: true
         type: string
       assets_dir:
@@ -17,7 +20,14 @@ on:
         required: false
         type: string
         default: '.wordpress-org'
+      release_config_url:
+        description: 'Authenticated release-configuration route'
+        required: false
+        type: string
+        default: 'https://brightleafdigital.io/wp-json/gravityops/v1/release-config'
     secrets:
+      BLD_API_KEY:
+        required: true
       WP_SVN_USERNAME:
         required: true
       WP_SVN_PASSWORD:
@@ -30,6 +40,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Read WordPress.org slug from release configuration
+        id: config
+        env:
+          CONFIG_URL: ${{ inputs.release_config_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PRODUCT_ID: ${{ inputs.product_id }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PRODUCT_ID" =~ ^[a-z0-9_-]{1,64}$ ]]; then
+            echo "::error::product_id '$PRODUCT_ID' is not a valid stable product ID."
+            exit 1
+          fi
+          umask 077
+          printf 'x-api-key: %s\n' "$API_KEY" > "$RUNNER_TEMP/release-config-headers"
+          curl -sS --fail-with-body --max-time 30 -H "@$RUNNER_TEMP/release-config-headers" \
+            "$CONFIG_URL/$PRODUCT_ID" -o "$RUNNER_TEMP/release-config.json"
+          rm -f "$RUNNER_TEMP/release-config-headers"
+          SLUG=$(jq -r --arg id "$PRODUCT_ID" --arg repo "$REPOSITORY" '
+              select(.schema_version == 1 and .product_id == $id and .deploy_to_wordpress == true
+                and (.repository | type == "string" and ascii_downcase == ($repo | ascii_downcase)))
+              | [.variants[]? | select(.channel == "free") | .wporg_slug | select(type == "string" and test("^[a-z0-9][a-z0-9-]{0,99}$"))]
+              | if length == 1 then .[0] else empty end
+            ' "$RUNNER_TEMP/release-config.json")
+          if [[ -z "$SLUG" ]]; then
+            echo "::error::'$PRODUCT_ID' has no valid WordPress.org release configuration for this repository."
+            exit 1
+          fi
+          echo "slug=$SLUG" | tee -a "$GITHUB_OUTPUT"
+
       - name: Install Subversion
         run: sudo apt-get update && sudo apt-get install -y subversion
 
@@ -38,7 +79,7 @@ jobs:
           SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
           ASSETS_DIR: ${{ inputs.assets_dir }}
-          SLUG: ${{ inputs.plugin_slug }}
+          SLUG: ${{ steps.config.outputs.slug }}
         shell: bash
         run: |
           set -euo pipefail

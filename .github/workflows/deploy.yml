@@ -20,27 +20,20 @@ name: 'Deploy'
 # Renamed from pcp-check.yml. Callers reference a reusable workflow by path, so this
 # file and the 15 caller workflows have to be pushed together — a tag pushed while
 # only one side has landed resolves to a workflow that is not there.
+#
+# Product routing comes from the GravityOps Release Service. A caller passes only its
+# product_id; the release_config job reads that product's authenticated release
+# configuration and derives the distribution slug, Freemius product, channels,
+# WordPress.org slug and docs choice. The response is validated, including that it
+# belongs to the calling repository, before anything is built or published.
 
 on:
   workflow_call:
     inputs:
-      plugin_slug:
-        description: 'The slug of the plugin on WordPress.org and Freemius'
+      product_id:
+        description: 'Stable GravityOps product ID; all release routing is read from the Release Service'
         required: true
         type: string
-      plugin_id:
-        description: 'Freemius plugin ID'
-        required: false
-        type: string
-      deploy_to_wp:
-        description: 'Whether to deploy to WordPress.org or not'
-        type: boolean
-        required: true
-      deploy_to_freemius:
-        description: 'Whether to deploy to Freemius or not'
-        type: boolean
-        required: false
-        default: true
       fail_on_duplicate:
         description: 'Whether to fail on duplicate plugin versions'
         type: boolean
@@ -59,25 +52,29 @@ on:
         description: 'Version to deploy (optional, overrides tag)'
         required: false
         type: string
-      update_feed_item_key:
-        description: 'The key for the update feed item'
-        required: true
+      release_config_url:
+        description: 'Authenticated release-configuration route'
+        required: false
         type: string
+        default: 'https://brightleafdigital.io/wp-json/gravityops/v1/release-config'
+      release_api_url:
+        description: 'Authenticated route that records a release'
+        required: false
+        type: string
+        default: 'https://brightleafdigital.io/wp-json/gravityops/v1/releases'
       docs_sync_url:
         description: 'URL to sync documentation'
         required: false
         type: string
-        default: 'https://brightleafdigital.io/wp-json/bld/v1/sync-docs'
+        default: 'https://brightleafdigital.io/wp-json/gravityops/v1/docs/sync'
       release_notify_url:
         description: 'URL that turns release milestones into Slack messages'
         required: false
         type: string
-        default: 'https://brightleafdigital.io/wp-json/bld/v1/release-notify'
+        default: 'https://brightleafdigital.io/wp-json/gravityops/v1/notifications/release'
 
     secrets:
       BLD_API_KEY:
-        required: true
-      UPDATE_FEED_URL:
         required: true
       FREEMIUS_PUBLIC_KEY:
         required: false
@@ -118,8 +115,75 @@ jobs:
           VERSION="${TAG#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-  deploy:
+  release_config:
     needs: [get_version]
+    if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
+    runs-on: ubuntu-latest
+    outputs:
+      distribution_slug: ${{ steps.config.outputs.distribution_slug }}
+      freemius_product_id: ${{ steps.config.outputs.freemius_product_id }}
+      deploy_to_freemius: ${{ steps.config.outputs.deploy_to_freemius }}
+      deploy_to_wp: ${{ steps.config.outputs.deploy_to_wp }}
+      wporg_slug: ${{ steps.config.outputs.wporg_slug }}
+      sync_documentation: ${{ steps.config.outputs.sync_documentation }}
+    steps:
+      - name: Read and validate release configuration
+        id: config
+        env:
+          CONFIG_URL: ${{ inputs.release_config_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PRODUCT_ID: ${{ inputs.product_id }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PRODUCT_ID" =~ ^[a-z0-9_-]{1,64}$ ]]; then
+            echo "::error::product_id '$PRODUCT_ID' is not a valid stable product ID."
+            exit 1
+          fi
+          # The key goes through a header file, never the command line.
+          umask 077
+          printf 'x-api-key: %s\n' "$API_KEY" > "$RUNNER_TEMP/release-config-headers"
+          curl -sS --fail-with-body --max-time 30 -H "@$RUNNER_TEMP/release-config-headers" \
+            "$CONFIG_URL/$PRODUCT_ID" -o "$RUNNER_TEMP/release-config.json"
+          rm -f "$RUNNER_TEMP/release-config-headers"
+
+          # Validate the whole record before using any field. The repository must be
+          # the calling one, so a misconfigured product_id cannot publish another product.
+          if ! jq -e --arg id "$PRODUCT_ID" --arg repo "$REPOSITORY" '
+              . as $c
+              | ($c.schema_version == 1)
+              and ($c.revision | type == "string" and test("^[0-9a-f]{64}$"))
+              and ($c.product_id == $id)
+              and ($c.repository | type == "string" and ascii_downcase == ($repo | ascii_downcase))
+              and ($c.distribution_slug | type == "string" and test("^[a-z0-9][a-z0-9-]{0,99}$"))
+              and ($c.deploy_to_freemius | type == "boolean")
+              and ($c.deploy_to_wordpress | type == "boolean")
+              and ($c.sync_documentation | type == "boolean")
+              and (($c.freemius_product_id // "") | type == "string")
+              and (if $c.deploy_to_freemius then (($c.freemius_product_id // "") | test("^[0-9]{1,10}$")) else true end)
+              and ($c.variants | type == "array" and length > 0)
+              and all($c.variants[]; (.channel == "free" or .channel == "premium")
+                    and (.plugin_file | type == "string" and test("^[a-z0-9][a-z0-9_-]*/[A-Za-z0-9_.-]+\\.php$"))
+                    and (.wporg_slug | type == "string"))
+              and ([ $c.variants[] | select(.channel == "free" and (.wporg_slug | test("^[a-z0-9][a-z0-9-]{0,99}$"))) ] | length) == (if $c.deploy_to_wordpress then 1 else 0 end)
+              and ($c.deploy_to_freemius or $c.deploy_to_wordpress)
+            ' "$RUNNER_TEMP/release-config.json" >/dev/null; then
+            echo "::error::Release configuration for '$PRODUCT_ID' is invalid or belongs to another repository."
+            exit 1
+          fi
+
+          jq -r '
+            "distribution_slug=\(.distribution_slug)",
+            "freemius_product_id=\(.freemius_product_id // "")",
+            "deploy_to_freemius=\(.deploy_to_freemius)",
+            "deploy_to_wp=\(.deploy_to_wordpress)",
+            "wporg_slug=\([.variants[] | select(.channel == "free") | .wporg_slug][0] // "")",
+            "sync_documentation=\(.sync_documentation)"
+          ' "$RUNNER_TEMP/release-config.json" | tee -a "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: [get_version, release_config]
     if: ${{ needs.get_version.outputs.version && needs.get_version.outputs.version != '' }}
     runs-on: ubuntu-latest
     # Surfaced so the notify job can report Freemius and WP.org independently
@@ -173,13 +237,13 @@ jobs:
           composer dump-autoload
 
       - name: Create Zip
-        if: ${{ inputs.deploy_to_freemius }}
+        if: ${{ needs.release_config.outputs.deploy_to_freemius == 'true' }}
         run: |
           mkdir -p build
           zip -r build/plugin.zip ${{ inputs.zip_files }}
 
       - name: Deploy to Freemius
-        if: ${{ inputs.deploy_to_freemius }}
+        if: ${{ needs.release_config.outputs.deploy_to_freemius == 'true' }}
         id: freemius_deploy
         uses: eitan-brightleaf/freemius-deploy@main
         with:
@@ -189,48 +253,48 @@ jobs:
           fail_on_duplicate: '${{ inputs.fail_on_duplicate }}'
           overwrite: '${{ inputs.overwrite }}'
           download_premium: 'false'
-          download_free: ${{ inputs.deploy_to_wp }}
+          download_free: ${{ needs.release_config.outputs.deploy_to_wp }}
         env:
           PUBLIC_KEY: ${{ secrets.FREEMIUS_PUBLIC_KEY }}
           DEV_ID: ${{ secrets.DEV_ID }}
           SECRET_KEY: ${{ secrets.FREEMIUS_SECRET_KEY }}
-          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
-          PLUGIN_ID: ${{ inputs.plugin_id }}
+          PLUGIN_SLUG: ${{ needs.release_config.outputs.distribution_slug }}
+          PLUGIN_ID: ${{ needs.release_config.outputs.freemius_product_id }}
 
       # always() so a failed upload still reports; the job still aborts afterwards
       # because the steps below carry no such condition. continue-on-error keeps a
       # Slack outage from turning a good release red.
       - name: Notify Slack — Freemius
-        if: ${{ always() && inputs.deploy_to_freemius && steps.freemius_deploy.outcome != 'skipped' }}
+        if: ${{ always() && needs.release_config.outputs.deploy_to_freemius == 'true' && steps.freemius_deploy.outcome != 'skipped' }}
         continue-on-error: true
         env:
           NOTIFY_URL: ${{ inputs.release_notify_url }}
           API_KEY: ${{ secrets.BLD_API_KEY }}
-          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PRODUCT_ID: ${{ inputs.product_id }}
           VERSION: ${{ needs.get_version.outputs.version }}
           STATUS: ${{ steps.freemius_deploy.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           jq -n \
-            --arg plugin_slug "$PLUGIN_SLUG" \
+            --arg product_id "$PRODUCT_ID" \
             --arg version "$VERSION" \
             --arg status "$STATUS" \
             --arg run_url "$RUN_URL" \
-            '{plugin_slug: $plugin_slug, version: $version, stage: "freemius", status: $status, run_url: $run_url}' \
+            '{product_id: $product_id, version: $version, stage: "freemius", status: $status, run_url: $run_url}' \
           | curl -sS -X POST "$NOTIFY_URL" \
               -H "x-api-key: $API_KEY" \
               -H "Content-Type: application/json" \
               --data @-
 
       - name: Prepare Plugin Directory for WP.org
-        if: ${{ inputs.deploy_to_wp }}
+        if: ${{ needs.release_config.outputs.deploy_to_wp == 'true' }}
         run: |
           mkdir plugin-dir
-          if [ "${{ inputs.deploy_to_freemius }}" = "true" ]; then
+          if [ "${{ needs.release_config.outputs.deploy_to_freemius }}" = "true" ]; then
             unzip ${{ steps.freemius_deploy.outputs.free_version }} -d plugin-dir
-            if [ -d "plugin-dir/${{ inputs.plugin_slug }}" ]; then
-              mv "plugin-dir/${{ inputs.plugin_slug }}"/* plugin-dir/
-              rm -rf "plugin-dir/${{ inputs.plugin_slug }}"
+            if [ -d "plugin-dir/${{ needs.release_config.outputs.distribution_slug }}" ]; then
+              mv "plugin-dir/${{ needs.release_config.outputs.distribution_slug }}"/* plugin-dir/
+              rm -rf "plugin-dir/${{ needs.release_config.outputs.distribution_slug }}"
             fi
           else
             # Local build logic using zip_files
@@ -242,7 +306,7 @@ jobs:
           fi
 
       - name: Modify Plugin Name for Lite version
-        if: ${{ inputs.deploy_to_freemius && inputs.deploy_to_wp }}
+        if: ${{ needs.release_config.outputs.deploy_to_freemius == 'true' && needs.release_config.outputs.deploy_to_wp == 'true' }}
         run: |
           # Find the main PHP file by searching for "Plugin Name:"
           MAIN_FILE=$(grep -l "Plugin Name:" plugin-dir/*.php | head -n 1)
@@ -258,17 +322,17 @@ jobs:
           fi
 
       - name: Install Subversion
-        if: ${{ inputs.deploy_to_wp }}
+        if: ${{ needs.release_config.outputs.deploy_to_wp == 'true' }}
         run: sudo apt-get update && sudo apt-get install -y subversion
 
       - name: Deploy to WordPress.org SVN
         id: wporg_deploy
-        if: ${{ inputs.deploy_to_wp }}
+        if: ${{ needs.release_config.outputs.deploy_to_wp == 'true' }}
         env:
           SVN_USERNAME: ${{ secrets.WP_SVN_USERNAME }}
           SVN_PASSWORD: ${{ secrets.WP_SVN_PASSWORD }}
           BUILD_DIR: plugin-dir
-          SLUG: ${{ inputs.plugin_slug }}
+          SLUG: ${{ needs.release_config.outputs.wporg_slug }}
           VERSION: ${{ needs.get_version.outputs.version }}
         shell: bash
         run: |
@@ -349,75 +413,108 @@ jobs:
           fi
 
       - name: Notify Slack — WordPress.org
-        if: ${{ always() && inputs.deploy_to_wp && steps.wporg_deploy.outcome != 'skipped' }}
+        if: ${{ always() && needs.release_config.outputs.deploy_to_wp == 'true' && steps.wporg_deploy.outcome != 'skipped' }}
         continue-on-error: true
         env:
           NOTIFY_URL: ${{ inputs.release_notify_url }}
           API_KEY: ${{ secrets.BLD_API_KEY }}
-          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PRODUCT_ID: ${{ inputs.product_id }}
           VERSION: ${{ needs.get_version.outputs.version }}
           STATUS: ${{ steps.wporg_deploy.outcome }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           jq -n \
-            --arg plugin_slug "$PLUGIN_SLUG" \
+            --arg product_id "$PRODUCT_ID" \
             --arg version "$VERSION" \
             --arg status "$STATUS" \
             --arg run_url "$RUN_URL" \
-            '{plugin_slug: $plugin_slug, version: $version, stage: "wporg", status: $status, run_url: $run_url}' \
+            '{product_id: $product_id, version: $version, stage: "wporg", status: $status, run_url: $run_url}' \
           | curl -sS -X POST "$NOTIFY_URL" \
               -H "x-api-key: $API_KEY" \
               -H "Content-Type: application/json" \
               --data @-
 
-      # Docs sync runs before the update-feed notification. Syncing creates a new
-      # plugin's docs category, and the changelog page that hangs off it; the
-      # notification stores the changelog on that page and is refused with a 422
-      # when it does not exist yet. The other way round, a plugin's first release
-      # silently lost its changelog entry (GOAIF 1.0.0), because curl does not fail
-      # the step on an HTTP error.
+      # Docs sync runs before the release is recorded. Syncing creates a new plugin's
+      # docs category, and the changelog page that hangs off it; recording projects the
+      # changelog onto that page. The other way round, a plugin's first release silently
+      # lost its changelog entry (GOAIF 1.0.0). Both calls now fail the step on an HTTP
+      # error; the Release Service queues a projection it cannot make yet (202).
       - name: Setup Pandoc
         uses: r-lib/actions/setup-pandoc@v2
 
       - name: Sync Documentation
+        if: ${{ needs.release_config.outputs.sync_documentation == 'true' }}
+        env:
+          DOCS_SYNC_URL: ${{ inputs.docs_sync_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PRODUCT_ID: ${{ inputs.product_id }}
+        shell: bash
         run: |
-          if [ -d "docs" ]; then
-            echo "Processing documentation for ${{ inputs.plugin_slug }}..."
-            # Convert Markdown to HTML fragments
-            # Use gfm, --wrap=none and strip trailing spaces to avoid unintended line breaks
-            find docs -name "*.md" -exec sh -c 'sed "s/[[:space:]]*$//" "$1" | pandoc -f gfm -t html --wrap=none -o "$1.html"' _ {} \;
-            # Zip and POST
-            zip -r docs.zip docs/
-            curl -X POST "${{ inputs.docs_sync_url }}" \
-              -H "x-api-key: ${{ secrets.BLD_API_KEY }}" \
-              -F "plugin_slug=${{ inputs.plugin_slug }}" \
-              -F "docs_zip=@docs.zip"
-          else
+          set -euo pipefail
+          if [ ! -d "docs" ]; then
             echo "No docs/ directory found. Skipping documentation sync."
+            exit 0
           fi
+          echo "Processing documentation for $PRODUCT_ID..."
+          # Convert Markdown to HTML fragments
+          # Use gfm, --wrap=none and strip trailing spaces to avoid unintended line breaks
+          find docs -name "*.md" -exec sh -c 'sed "s/[[:space:]]*$//" "$1" | pandoc -f gfm -t html --wrap=none -o "$1.html"' _ {} \;
+          # Zip and POST; a rejected sync fails the release so the docs gap is visible.
+          zip -r docs.zip docs/
+          umask 077
+          printf 'x-api-key: %s\n' "$API_KEY" > "$RUNNER_TEMP/docs-headers"
+          curl -sS --fail-with-body -X POST "$DOCS_SYNC_URL" \
+            -H "@$RUNNER_TEMP/docs-headers" \
+            -F "product_id=$PRODUCT_ID" \
+            -F "docs_zip=@docs.zip"
+          rm -f "$RUNNER_TEMP/docs-headers"
 
-      - name: Notify Update Feed
+      - name: Record Release
+        env:
+          RELEASE_API_URL: ${{ inputs.release_api_url }}
+          API_KEY: ${{ secrets.BLD_API_KEY }}
+          PRODUCT_ID: ${{ inputs.product_id }}
+          VERSION: ${{ needs.get_version.outputs.version }}
+        shell: bash
         run: |
-          VERSION="${{ needs.get_version.outputs.version }}"
-          # Print the lines after this version's "= x.y.z … =" heading, up to the next
-          # version or section heading. The old sed range deleted its last line on the
-          # assumption that it was the next heading; for a plugin's only entry there
-          # is none, so it dropped the entry's last bullet (GOCSM 1.0.0 shipped empty).
-          CHANGELOG=$(awk -v v="$VERSION" '/^==/ { if (found) exit } /^= / { if (found) exit; if (index($0, "= " v " ") == 1) { found = 1; next } } found' readme.txt | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | tr '\n' ' ' | sed 's/"/\\"/g')
-          curl -X POST ${{ secrets.UPDATE_FEED_URL }} \
-            -H "X-API-Key: ${{ secrets.BLD_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d "{
-            \"item_updated\": \"${{ inputs.update_feed_item_key }}\",
-            \"version\": \"$VERSION\",
-            \"changelog\": \"$CHANGELOG\"
-          }"
+          set -euo pipefail
+          # This exact version's entry inside == Changelog ==, through EOF when it is
+          # the only entry, joined to one line as the release projection expects.
+          CHANGELOG=''
+          if [ -f readme.txt ]; then
+            CHANGELOG=$(awk -v v="$VERSION" '
+              { sub(/\r$/, "") }
+              /^== Changelog ==[[:space:]]*$/ { in_changelog = 1; next }
+              /^==/ { if (in_changelog) exit }
+              in_changelog && /^= / {
+                if (found) exit
+                if ($2 == v) { found = 1; next }
+              }
+              found { print }
+            ' readme.txt | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d' | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+          fi
+          if [ -z "$CHANGELOG" ]; then
+            echo "::warning::No changelog entry for $VERSION in readme.txt; recording the release without one."
+          fi
+          umask 077
+          printf 'x-api-key: %s\n' "$API_KEY" > "$RUNNER_TEMP/release-headers"
+          jq -n \
+            --arg product_id "$PRODUCT_ID" \
+            --arg version "$VERSION" \
+            --arg changelog "$CHANGELOG" \
+            --arg released_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{product_id: $product_id, version: $version, released_at: $released_at, changelog: $changelog, include_in_recent_updates: true}' \
+          | curl -sS --fail-with-body -X POST "$RELEASE_API_URL" \
+              -H "@$RUNNER_TEMP/release-headers" \
+              -H "Content-Type: application/json" \
+              --data @-
+          rm -f "$RUNNER_TEMP/release-headers"
 
   # Fires whether or not deploy ran. Quality gating moved to scripts/preflight.sh,
   # which runs before the tag exists, so there is no longer a check job that can fail
   # here — a run with no version is simply not a release and has nothing to report.
   notify:
-    needs: [get_version, deploy]
+    needs: [get_version, release_config, deploy]
     if: ${{ always() && needs.get_version.outputs.version != '' }}
     runs-on: ubuntu-latest
     steps:
@@ -435,9 +532,11 @@ jobs:
         env:
           NOTIFY_URL: ${{ inputs.release_notify_url }}
           API_KEY: ${{ secrets.BLD_API_KEY }}
-          PLUGIN_SLUG: ${{ inputs.plugin_slug }}
+          PRODUCT_ID: ${{ inputs.product_id }}
           VERSION: ${{ needs.get_version.outputs.version }}
-          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          # A release whose configuration could not be read never starts deploy; report
+          # that as a failed deploy rather than a skipped one.
+          DEPLOY_RESULT: ${{ needs.release_config.result == 'failure' && 'failure' || needs.deploy.result }}
           FREEMIUS_RESULT: ${{ needs.deploy.outputs.freemius }}
           WPORG_RESULT: ${{ needs.deploy.outputs.wporg }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -465,7 +564,7 @@ jobs:
           # lists what actually happened instead of a column of question marks.
           # The overall verdict is derived from these server-side.
           jq -n \
-            --arg plugin_slug "$PLUGIN_SLUG" \
+            --arg product_id "$PRODUCT_ID" \
             --arg version "$VERSION" \
             --arg changelog "$CHANGELOG" \
             --arg run_url "$RUN_URL" \
@@ -473,7 +572,7 @@ jobs:
             --arg freemius "$FREEMIUS_RESULT" \
             --arg wporg "$WPORG_RESULT" \
             '{
-               plugin_slug: $plugin_slug,
+               product_id: $product_id,
                version: $version,
                changelog: $changelog,
                stage: "run",
