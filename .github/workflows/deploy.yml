@@ -219,6 +219,12 @@ jobs:
           find vendor -type f -name "*.sh" -delete
           rm -f vendor/trustedlogin/client/bin/build-sass
           rm -f vendor/bin/build-sass
+          # WordPress.org only permits code, text, media and data files. Drop the Composer bin
+          # proxies and the key, signature and build files some libraries ship (for example
+          # defuse/php-encryption and paragonie/random_compat). Runs before Strauss copies them.
+          rm -rf vendor/bin
+          rm -f vendor/defuse/php-encryption/bin/generate-defuse-key
+          find vendor -type f \( -name Makefile -o -name "*.asc" -o -name "*.sig" -o -name "*.pubkey" -o -name "*.phar" \) -delete
 
       # See the pcp job: Strauss reads any github-oauth token via Composer's Factory; clear it
       # since prefixing needs no GitHub auth (gravityops/core is SSH/no-api, the rest are public).
@@ -292,9 +298,21 @@ jobs:
           mkdir plugin-dir
           if [ "${{ needs.release_config.outputs.deploy_to_freemius }}" = "true" ]; then
             unzip ${{ steps.freemius_deploy.outputs.free_version }} -d plugin-dir
-            if [ -d "plugin-dir/${{ needs.release_config.outputs.distribution_slug }}" ]; then
-              mv "plugin-dir/${{ needs.release_config.outputs.distribution_slug }}"/* plugin-dir/
-              rm -rf "plugin-dir/${{ needs.release_config.outputs.distribution_slug }}"
+            # Freemius wraps the free zip in one folder. It is usually named after the
+            # distribution slug, but a product whose free (WordPress.org) slug differs from its
+            # paid slug gets the free slug instead. Flatten whichever is present, or trunk
+            # would hold a nested folder rather than the plugin.
+            for wrapper in "${{ needs.release_config.outputs.distribution_slug }}" "${{ needs.release_config.outputs.wporg_slug }}"; do
+              if [ -n "$wrapper" ] && [ -d "plugin-dir/$wrapper" ]; then
+                mv "plugin-dir/$wrapper"/* plugin-dir/
+                rm -rf "plugin-dir/$wrapper"
+                break
+              fi
+            done
+            # Refuse to deploy a nested or empty tree: the plugin's main file must sit at the top.
+            if ! grep -lq "Plugin Name:" plugin-dir/*.php 2>/dev/null; then
+              echo "::error::No plugin main file at the top of the unpacked free version. Top-level entries: $(ls -A plugin-dir | tr '\n' ' ')"
+              exit 1
             fi
           else
             # Local build logic using zip_files
