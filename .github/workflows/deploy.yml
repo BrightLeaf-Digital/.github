@@ -262,8 +262,11 @@ jobs:
           file_name: build/plugin.zip
           release_mode: 'released'
           add_contributor: 'true'
-          fail_on_duplicate: '${{ inputs.fail_on_duplicate }}'
-          overwrite: '${{ inputs.overwrite }}'
+          # A push that moves an existing tag (created == false) is a deliberate re-release from
+          # `tag-plugins.sh --overwrite`: replace the version already on Freemius instead of
+          # failing as a duplicate. A new tag keeps the inputs' defaults.
+          fail_on_duplicate: '${{ inputs.fail_on_duplicate && !(github.event_name == ''push'' && github.event.created == false) }}'
+          overwrite: '${{ inputs.overwrite || (github.event_name == ''push'' && github.event.created == false) }}'
           download_premium: 'false'
           download_free: ${{ needs.release_config.outputs.deploy_to_wp }}
         env:
