@@ -225,6 +225,12 @@ jobs:
           rm -rf vendor/bin
           rm -f vendor/defuse/php-encryption/bin/generate-defuse-key
           find vendor -type f \( -name Makefile -o -name "*.asc" -o -name "*.sig" -o -name "*.pubkey" -o -name "*.phar" \) -delete
+          # Test and build scaffolding a reviewer reads as shipped code: TrustedLogin's demo
+          # plugin (a second "Plugin Name" header, unguarded and unescaped), phar build scripts,
+          # and test configuration. None of it is autoloaded.
+          rm -f vendor/trustedlogin/client/client.php
+          rm -rf vendor/defuse/php-encryption/dist vendor/paragonie/random_compat/other
+          rm -f vendor/paragonie/random_compat/psalm.xml vendor/gravityops/core/phpunit.xml
 
       # See the pcp job: Strauss reads any github-oauth token via Composer's Factory; clear it
       # since prefixing needs no GitHub auth (gravityops/core is SSH/no-api, the rest are public).
