@@ -231,6 +231,10 @@ jobs:
           rm -f vendor/trustedlogin/client/client.php
           rm -rf vendor/defuse/php-encryption/dist vendor/paragonie/random_compat/other
           rm -f vendor/paragonie/random_compat/psalm.xml vendor/gravityops/core/phpunit.xml
+          # Editor and static-analysis metadata, and TrustedLogin's Sass build script (unguarded).
+          rm -rf vendor/trustedlogin/client/build
+          rm -f vendor/paragonie/random_compat/psalm-autoload.php
+          find vendor -type f \( -name .phpstorm.meta.php -o -name .editorconfig \) -delete
 
       # See the pcp job: Strauss reads any github-oauth token via Composer's Factory; clear it
       # since prefixing needs no GitHub auth (gravityops/core is SSH/no-api, the rest are public).
